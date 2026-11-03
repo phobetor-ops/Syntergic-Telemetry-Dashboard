@@ -1,0 +1,108 @@
+name: Syntergic EWS Cloud Sentinel & Telegram Alerting
+
+on:
+  schedule:
+    # Job 1 (Sentinel Recon & Emergency Spikes): Runs every 4 hours (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+    - cron: '0 */4 * * *'
+    # Job 2 (7-Front Global Panorama Digest): Runs once daily at 10:00 UTC
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      target_job:
+        description: 'Select which Syntergic Cloud job to trigger manually'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - sentinel
+          - digest
+          - both
+      force_notify:
+        description: 'Ignore deduplication cache and force alert for all current RED spikes'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: syntergic-ews-${{ github.workflow }}-${{ github.event.schedule || github.run_id }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  PYTHONUNBUFFERED: '1'
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+jobs:
+  sentinel:
+    name: Job 1 - 7-Front OSINT Sentinel & Emergency RED Spikes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      (github.event_name == 'schedule' && github.event.schedule == '0 */4 * * *') ||
+      (github.event_name == 'workflow_dispatch' &&
+       (github.event.inputs.target_job == 'sentinel' || github.event.inputs.target_job == 'both'))
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'backend/requirements.txt'
+
+      - name: Restore Seen Spikes Deduplication Cache
+        uses: actions/cache@v4
+        with:
+          path: backend/.cache
+          key: syntergic-sentinel-cache-${{ github.run_id }}
+          restore-keys: |
+            syntergic-sentinel-cache-
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Execute 7-Front Sentinel & Emergency Telegram Alerting
+        run: |
+          if [ "${{ github.event.inputs.force_notify }}" = "true" ]; then
+            python backend/cloud_sentinel.py --mode sentinel --force-notify
+          else
+            python backend/cloud_sentinel.py --mode sentinel
+          fi
+
+  digest:
+    name: Job 2 - Daily 7-Front Global Entropy Panorama Digest
+    needs: [sentinel]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      always() &&
+      (needs.sentinel.result == 'success' || needs.sentinel.result == 'skipped') &&
+      ((github.event_name == 'schedule' && github.event.schedule == '0 10 * * *') ||
+       (github.event_name == 'workflow_dispatch' &&
+        (github.event.inputs.target_job == 'digest' || github.event.inputs.target_job == 'both')))
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'backend/requirements.txt'
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Execute 7-Front Global Panorama Digest Delivery
+        run: python backend/cloud_sentinel.py --mode digest
