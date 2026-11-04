@@ -3,6 +3,9 @@
 > **Sistema de Alerta Temprana (EWS) e IDS Pasivo Ciber-Físico bajo arquitectura Zero-Trust.**  
 > Monitorea el estado global en tiempo real a través de **7 Frentes Estratégicos** y **15 Fuentes Oficiales en Vivo**, traduciendo eventos críticos del mundo real en métricas matemáticas de **Entropía Ambiental y Social ($\Omega$)** con cartografía vectorial exacta (`Natural Earth 110m WGS-84`), evidencia forense verificable y aislamiento activo en Sandbox (**Protocolo Wu-Wei**).
 
+🌐 **Live Cloud Dashboard (GitHub Pages — Costo Cero):**  
+👉 **[https://phobetor-ops.github.io/Syntergic-Telemetry-Dashboard/](https://phobetor-ops.github.io/Syntergic-Telemetry-Dashboard/)**
+
 ---
 
 ## ÍNDICE DE DOCUMENTACIÓN

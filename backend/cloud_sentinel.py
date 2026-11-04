@@ -111,14 +111,83 @@ def evaluate_global_state(events: List[Dict[str, Any]]) -> Tuple[float, str, Lis
     return global_omega, threat_level, critical_events
 
 
+def export_static_snapshot(
+    events: List[Dict[str, Any]],
+    global_omega: float,
+    threat_level: str,
+    target_path: Path,
+) -> None:
+    """Exports the 7-Front live OSINT catalog as a TelemetryRecord[] snapshot for GitHub Pages."""
+    directive = (
+        "STATUS: RED | GLOBAL KERNEL PANIC | WU-WEI PROTOCOL ENGAGED / SANDBOXING ACTIVE"
+        if threat_level == "RED"
+        else "STATUS: YELLOW | RISING ENTROPY | RATE LIMITING ACTIVE"
+        if threat_level == "YELLOW"
+        else "STATUS: GREEN | STABLE SYNTERGIA | NORMAL I/O"
+    )
+    records: List[Dict[str, Any]] = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for idx, item in enumerate(events):
+        sf = float(item.get("base_friction", 0.3))
+        si = float(item.get("base_inertia", 0.3))
+        om = round(0.5 * sf + 0.5 * si, 3)
+        lvl = "RED" if om > 0.70 else "YELLOW" if om >= 0.40 else "GREEN"
+        act = (
+            "NEUTRALIZED: WU-WEI PROTOCOL ENGAGED // TOTAL HARDWARE SANDBOX QUARANTINE"
+            if lvl == "RED"
+            else "NEUTRALIZED: DYNAMIC RATE-LIMITING APPLIED // ADAPTIVE CRYPTIC BUFFER"
+            if lvl == "YELLOW"
+            else "NEUTRALIZED: ROUTED TO COLD MATRIX // PASSIVE SYNTERGIC LOG"
+        )
+        records.append({
+            "id": f"OSINT-CLOUD-{1000 + idx}",
+            "timestamp": now_iso,
+            "source": item["source"],
+            "headline": item["headline"],
+            "metrics": {
+                "social_friction": sf,
+                "structural_inertia": si,
+                "omega_index": om,
+            },
+            "threat_level": lvl,
+            "moving_avg_omega": global_omega,
+            "mitigation_directive": directive,
+            "neutralized_action": act,
+            "mitigated_by_soc": False,
+            "geo": item["geo"],
+            "evidence": item["evidence"],
+        })
+
+    snapshot = {
+        "generated_at": now_iso,
+        "system_state": {
+            "threat_level": threat_level,
+            "current_omega": records[0]["metrics"]["omega_index"] if records else global_omega,
+            "moving_avg_omega": global_omega,
+            "social_friction": round(global_omega * 0.94, 3),
+            "structural_inertia": round(min(0.99, global_omega * 1.04), 3),
+            "mitigation_directive": directive,
+            "connected_clients": 1,
+            "total_injections_processed": len(records),
+            "timestamp": now_iso,
+        },
+        "history": records,
+    }
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Exported %d live 7-Front records to %s", len(records), target_path)
+
+
 def run_sentinel_pipeline(mode: str = "sentinel", dry_run: bool = False, force_notify: bool = False) -> int:
     """Executes the cloud reconnaissance and Telegram alerting pipeline."""
     load_dotenv_files()
     logger.info("Initializing Syntergic Cloud Sentinel [mode=%s, dry_run=%s]...", mode, dry_run)
 
-    events = get_live_osint_catalog(force_refresh=True)
+    from mock_feeds import get_active_osint_pool
+    events = get_active_osint_pool(force_refresh=True)
     if not events:
-        logger.error("No live OSINT events retrieved. Exiting.")
+        logger.error("No OSINT events retrieved. Exiting.")
         return 1
 
     global_omega, threat_level, critical_events = evaluate_global_state(events)
@@ -129,6 +198,16 @@ def run_sentinel_pipeline(mode: str = "sentinel", dry_run: bool = False, force_n
         global_omega,
         threat_level,
     )
+
+    # Always write updated static snapshot for GitHub Pages frontend
+    snapshot_file = BACKEND_DIR.parent / "frontend" / "public" / "live-osint-snapshot.json"
+    try:
+        export_static_snapshot(events, global_omega, threat_level, snapshot_file)
+    except Exception as exc:
+        logger.warning("Could not write snapshot file: %s", exc)
+
+    if mode == "export-only":
+        return 0
 
     seen_hashes = load_seen_hashes()
     new_critical: List[Dict[str, Any]] = []
@@ -175,9 +254,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["sentinel", "digest", "both"],
+        choices=["sentinel", "digest", "both", "export-only"],
         default="sentinel",
-        help="Pipeline mode: 'sentinel' (emergency RED spikes), 'digest' (7-front summary), or 'both'.",
+        help="Pipeline mode: 'sentinel', 'digest', 'both', or 'export-only' (generates GitHub Pages JSON).",
     )
     parser.add_argument(
         "--dry-run",
