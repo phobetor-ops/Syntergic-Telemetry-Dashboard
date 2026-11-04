@@ -45,24 +45,25 @@ export default function SyntergicDashboard() {
     <div
       className={`min-h-screen w-full transition-colors duration-500 p-3 sm:p-5 md:p-7 flex flex-col gap-5 ${
         isRed
-          ? "bg-[#0c0205] shadow-[inset_0_0_140px_rgba(244,63,94,0.18)]"
+          ? "bg-[#0b0307] shadow-[inset_0_0_140px_rgba(244,63,94,0.14)]"
           : isYellow
-          ? "bg-[#0b0802] shadow-[inset_0_0_100px_rgba(245,158,11,0.08)]"
+          ? "bg-[#080702] shadow-[inset_0_0_100px_rgba(245,158,11,0.06)]"
           : "bg-slate-950"
       }`}
     >
       {/* Dynamic Red Alert Warning Banner Bar if RED */}
       {isRed && (
-        <div className="w-full bg-rose-600 text-black py-1.5 px-4 rounded text-center text-xs font-mono font-extrabold uppercase tracking-widest animate-pulse flex items-center justify-center gap-2 shadow-lg shadow-rose-900/50">
+        <div className="w-full bg-rose-600 text-black py-2 px-4 rounded-xl text-center text-xs font-mono font-extrabold uppercase tracking-widest animate-pulse flex items-center justify-center gap-2 shadow-lg shadow-rose-900/50">
           <Zap className="w-4 h-4 fill-black" />
-          ALERTA CRÍTICA: CARGA TÉRMICA EXCEDE EL UMBRAL DE SEGURIDAD (&gt;0.70 Ω) — PROTOCOLO WU-WEI ACTIVADO — AISLAMIENTO SANDBOX EN CURSO
+          ALERTA PRIORITARIA: DETECTADOS ZERO-DAYS / INCIDENTES CRÍTICOS EN CURSO — REVISAR MEDIDAS CORRECTIVAS
           <Zap className="w-4 h-4 fill-black" />
         </div>
       )}
 
-      {/* COMPONENT 1: NETWORK STATUS HEADER */}
+      {/* COMPONENT 1: NETWORK STATUS HEADER (Decision-driven) */}
       <NetworkStatusHeader
         systemState={systemState}
+        telemetryList={telemetryHistory}
         connected={connected}
         latencyMs={latencyMs}
         soundEnabled={soundEnabled}
@@ -70,11 +71,12 @@ export default function SyntergicDashboard() {
         onTriggerSpike={triggerSpike}
       />
 
-      {/* SYSTEM MATRIX STATS */}
+      {/* SYSTEM MATRIX STATS (4 Strategic Domain Summaries) */}
       <SystemMatrixStats
         systemState={systemState}
         connected={connected}
         totalRecords={telemetryHistory.length}
+        telemetryList={telemetryHistory}
       />
 
       {/* VIEW SWITCHER TABS & STREAM PAUSE CONTROL */}
@@ -82,45 +84,45 @@ export default function SyntergicDashboard() {
         <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
           <button
             onClick={() => setActiveTab("SPLIT")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
               activeTab === "SPLIT"
                 ? "bg-cyan-950 border border-cyan-500 text-cyan-300 shadow-lg shadow-cyan-950/50"
                 : "bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200"
             }`}
           >
             <Columns className="w-3.5 h-3.5" />
-            <span>CENTRO DE COMANDO COMPLETO (MAPA + TELEMETRÍA)</span>
+            <span>CENTRO DE COMANDO (MAPA + DECISIÓN)</span>
           </button>
 
           <button
             onClick={() => setActiveTab("MAP")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
               activeTab === "MAP"
                 ? "bg-cyan-950 border border-cyan-500 text-cyan-300 shadow-lg shadow-cyan-950/50"
                 : "bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200"
             }`}
           >
             <Globe className="w-3.5 h-3.5" />
-            <span>CARTOGRAFÍA GLOBAL FORENSE</span>
+            <span>CARTOGRAFÍA GLOBAL DE AMENAZAS</span>
           </button>
 
           <button
             onClick={() => setActiveTab("GRAPHS")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
               activeTab === "GRAPHS"
                 ? "bg-cyan-950 border border-cyan-500 text-cyan-300 shadow-lg shadow-cyan-950/50"
                 : "bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200"
             }`}
           >
             <Activity className="w-3.5 h-3.5" />
-            <span>SERIES TEMPORALES (RECHARTS)</span>
+            <span>TENDENCIAS &amp; MONITOREO TEMPORAL</span>
           </button>
         </div>
 
         <div className="flex items-center gap-3 font-mono text-xs">
           <button
             onClick={() => setStreamPaused(!streamPaused)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded border font-bold transition-colors cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border font-bold transition-colors cursor-pointer ${
               streamPaused
                 ? "bg-amber-950/80 border-amber-500 text-amber-300"
                 : "bg-slate-900 border-slate-700 text-emerald-400 hover:border-emerald-500"
@@ -144,7 +146,7 @@ export default function SyntergicDashboard() {
       {/* DYNAMIC VIEW CONTAINER */}
       {activeTab === "SPLIT" && (
         <div className="flex flex-col gap-5">
-          {/* Top: Global Map + Integrated Forensic Dossier */}
+          {/* Top: Global Map + Integrated Decision Dossier */}
           <GlobalThreatMap
             telemetryList={telemetryHistory}
             selectedEvent={selectedEvent}
@@ -158,6 +160,7 @@ export default function SyntergicDashboard() {
             <div className="xl:col-span-7 w-full">
               <TelemetryGraphs
                 data={chartData}
+                telemetryList={telemetryHistory}
                 currentOmega={systemState.current_omega}
                 movingAvg={systemState.moving_avg_omega}
                 socialFriction={systemState.social_friction}
@@ -198,6 +201,7 @@ export default function SyntergicDashboard() {
           <div className="xl:col-span-7 w-full">
             <TelemetryGraphs
               data={chartData}
+              telemetryList={telemetryHistory}
               currentOmega={systemState.current_omega}
               movingAvg={systemState.moving_avg_omega}
               socialFriction={systemState.social_friction}
@@ -238,17 +242,17 @@ export default function SyntergicDashboard() {
           <div className="flex items-center gap-1.5 text-slate-400">
             <Shield className="w-3.5 h-3.5 text-emerald-400" />
             <span className="font-bold">
-              SYNTERGIC IDS v2.5 PRODUCTION (NATURAL EARTH WGS-84 &amp; FORENSIC ENGINE)
+              SYNTERGIC DECISION INTELLIGENCE v2.5 (NATURAL EARTH WGS-84 &amp; ZERO-TRUST OSINT)
             </span>
           </div>
           <span>•</span>
-          <span>FASTAPI + CELERY + REDIS 7 + NEXT.JS 14</span>
+          <span>7 FRENTES ESTRATÉGICOS // 15 FUENTES OFICIALES</span>
         </div>
 
         <div className="flex items-center gap-4">
           <span>CARTOGRAFÍA: D3-GEO NATURAL EARTH 110M</span>
           <span>•</span>
-          <span>STATUS: PRODUCTION ARMED</span>
+          <span>ESTADO: VIGILANCIA ACTIVA</span>
         </div>
       </footer>
     </div>

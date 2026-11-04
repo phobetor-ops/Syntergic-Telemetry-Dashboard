@@ -2,24 +2,25 @@
 
 import React, { useState, useEffect } from "react";
 import { TelemetryRecord } from "@/types/telemetry";
+import { analyzeRecordForDecision, FRONT_META } from "@/utils/intelligenceFormatter";
 import {
   X,
   MapPin,
   ShieldAlert,
   ShieldCheck,
   AlertTriangle,
-  Radio,
   Copy,
   Check,
   ExternalLink,
   Download,
-  Flame,
-  Cpu,
-  Activity,
   Terminal,
   Clock,
   Lock,
   Layers,
+  ChevronDown,
+  ChevronUp,
+  Crosshair,
+  FileText,
 } from "lucide-react";
 
 interface ForensicEvidenceModalProps {
@@ -42,6 +43,7 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [mitigating, setMitigating] = useState<boolean>(false);
+  const [showTechnicalLog, setShowTechnicalLog] = useState<boolean>(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -55,8 +57,10 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
 
   if (!event) return null;
 
-  const isRed = event.threat_level === "RED";
-  const isYellow = event.threat_level === "YELLOW";
+  const intel = analyzeRecordForDecision(event);
+  const isRed = intel.severityLabel === "CRÍTICO";
+  const isYellow = intel.severityLabel === "OBSERVACIÓN";
+  const frontData = FRONT_META[event.evidence?.strategic_front || "CYBER_WARFARE"];
 
   const handleCopyEvidence = () => {
     if (event.evidence?.raw_evidence) {
@@ -72,7 +76,7 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
       encodeURIComponent(JSON.stringify(event, null, 2));
     const downloadAnchor = document.createElement("a");
     downloadAnchor.setAttribute("href", dataStr);
-    downloadAnchor.setAttribute("download", `SYNTERGIC-FORENSIC-${event.id}.json`);
+    downloadAnchor.setAttribute("download", `SYNTERGIC-INTEL-${event.id}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -85,20 +89,20 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
         const updated = await onMitigateNode(
           event.id,
           event.geo?.facility,
-          "WU_WEI_SANDBOX_ISOLATION"
+          "OPERATIONAL_CONTAINMENT"
         );
         if (updated && onUpdateEvent) {
           onUpdateEvent(updated);
         }
         setActionFeedback(
-          "PROTOCOLO WU-WEI EJECUTADO: NODO AISLADO EN SANDBOX Y CARGA TÉRMICA ESTABILIZADA"
+          "AMENAZA CONTENIDA: NODO AISLADO EN PROTOCOLO DE SEGURIDAD"
         );
         setTimeout(() => setActionFeedback(null), 4000);
       } finally {
         setMitigating(false);
       }
     } else {
-      setActionFeedback("SECTOR AISLADO: PROTOCOLO WU-WEI ACTIVADO");
+      setActionFeedback("INCIDENTE MARCADO COMO ATENDIDO");
       setTimeout(() => setActionFeedback(null), 3500);
     }
   };
@@ -110,31 +114,31 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className={`w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-lg border-2 bg-slate-950 shadow-2xl font-mono text-xs flex flex-col ${
+        className={`w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-xl border-2 bg-slate-950 shadow-2xl font-mono text-xs flex flex-col ${
           isRed
-            ? "border-rose-500 shadow-rose-950/40"
+            ? "border-rose-500/80 shadow-[0_0_40px_rgba(244,63,94,0.3)]"
             : isYellow
-            ? "border-amber-500 shadow-amber-950/30"
-            : "border-emerald-500 shadow-emerald-950/20"
+            ? "border-amber-500/70 shadow-[0_0_35px_rgba(245,158,11,0.2)]"
+            : "border-cyan-500/60 shadow-[0_0_35px_rgba(6,182,212,0.18)]"
         }`}
       >
         {/* Top Header Bar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-800 sticky top-0 z-10">
-          <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between px-5 py-3.5 bg-slate-900/95 border-b border-slate-800 sticky top-0 z-10 backdrop-blur-sm">
+          <div className="flex items-center gap-3">
             {isRed ? (
-              <ShieldAlert className="w-5 h-5 text-rose-400 animate-pulse" />
+              <ShieldAlert className="w-6 h-6 text-rose-400 animate-pulse shrink-0" />
             ) : isYellow ? (
-              <AlertTriangle className="w-5 h-5 text-amber-400 animate-pulse" />
+              <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0" />
             ) : (
-              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              <ShieldCheck className="w-6 h-6 text-cyan-400 shrink-0" />
             )}
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-extrabold text-sm text-slate-100 tracking-wider">
-                  INSPECCIÓN FORENSE PROFUNDA // EVIDENCIAS DEL SUCESO
+                <span className="font-extrabold text-sm sm:text-base text-slate-100 tracking-wider">
+                  EXPEDIENTE DE INTELIGENCIA OPERATIVA
                 </span>
                 <span
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
+                  className={`px-2.5 py-0.5 rounded text-[10px] font-bold border uppercase ${
                     isRed
                       ? "bg-rose-500/20 text-rose-300 border-rose-500/50"
                       : isYellow
@@ -142,19 +146,19 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
                       : "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
                   }`}
                 >
-                  {event.threat_level} ALERT (Ω {event.metrics.omega_index.toFixed(3)})
+                  {intel.categoryBadge}
                 </span>
               </div>
-              <div className="text-[10px] text-slate-400">
-                SIGNAL ID: <span className="text-cyan-400 font-bold">{event.id}</span> | TIMESTAMP:{" "}
-                {event.timestamp}
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                FRENTE: <span className="text-cyan-400 font-bold">{frontData?.label || intel.frontLabel}</span> | ORIGEN:{" "}
+                <span className="text-slate-200 font-semibold">{intel.sourceLabel}</span>
               </div>
             </div>
           </div>
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -163,280 +167,209 @@ export const ForensicEvidenceModal: React.FC<ForensicEvidenceModalProps> = ({
         {/* Modal Body */}
         <div className="p-4 sm:p-6 space-y-4">
           {actionFeedback && (
-            <div className="p-2.5 rounded bg-emerald-950/90 border border-emerald-500 text-emerald-200 text-center font-bold tracking-wider animate-pulse">
+            <div className="p-3 rounded-lg bg-emerald-950/90 border border-emerald-500 text-emerald-200 text-center font-bold tracking-wider animate-pulse">
               ✓ {actionFeedback}
             </div>
           )}
 
-          {/* Location & Geospatial Provenance Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-3.5 rounded bg-black/60 border border-slate-800">
-            <div className="md:col-span-2 flex flex-col gap-1">
-              <span className="text-slate-500 text-[10px] uppercase font-bold flex items-center gap-1">
-                <MapPin className="w-3.5 h-3.5 text-cyan-400" />
-                PROCEDENCIA E INSTALACIÓN CRÍTICA
+          {/* Incident Title Card */}
+          <div className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+              <span className="uppercase font-bold text-cyan-400 flex items-center gap-1">
+                <Crosshair className="w-3.5 h-3.5" />
+                SUCESO VERIFICADO EN VIVO
               </span>
-              <div className="font-bold text-slate-100 text-sm">
-                {event.geo?.facility || "DISTRIBUTED EDGE GATEWAY"}
-              </div>
-              <div className="text-slate-300 text-xs">
-                {event.geo?.city}, {event.geo?.country} ({event.geo?.region})
-              </div>
+              <span>ID: <code className="text-slate-300">{event.id}</code></span>
             </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[10px] uppercase font-bold">
-                COORDENADAS GPS (WGS-84)
-              </span>
-              <div className="font-mono text-cyan-400 text-sm font-bold">
-                {event.geo
-                  ? `${event.geo.lat.toFixed(4)}° N, ${event.geo.lng.toFixed(4)}° E`
-                  : "UNMAPPED"}
-              </div>
-              <div className="text-slate-400 text-[10px]">
-                RADIO DE IMPACTO:{" "}
-                <strong className="text-slate-200">
-                  {event.evidence?.impact_radius_km || 350} km
-                </strong>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[10px] uppercase font-bold flex items-center gap-1">
-                <Layers className="w-3.5 h-3.5 text-emerald-400" />
-                PROTOCOLO &amp; SECTOR
-              </span>
-              <div className="font-bold text-emerald-400 text-xs truncate">
-                {event.evidence?.protocol || "BGP-4 / DWDM TELEMETRY"}
-              </div>
-              <div className="text-slate-400 text-[10px] truncate">
-                ASN/SECTOR:{" "}
-                <strong className="text-white">
-                  {event.evidence?.asn_or_sector || event.source}
-                </strong>
-              </div>
-            </div>
+            <h2 className="text-slate-100 text-base sm:text-lg font-bold leading-snug">
+              {intel.cleanTitle}
+            </h2>
+            <p className="text-slate-300 text-xs sm:text-sm leading-relaxed pt-1">
+              {intel.summary}
+            </p>
           </div>
 
-          {/* Raw Headline & Narrative */}
-          <div className="p-3.5 rounded bg-slate-900/60 border border-slate-800">
-            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-              <span className="uppercase font-bold">
-                CABECERA DE TRANSMISIÓN OSINT [{event.source}]
-              </span>
-              <span>
-                CONFIANZA ALGORÍTMICA:{" "}
-                <strong className="text-cyan-400">
-                  {((event.evidence?.confidence_score || 0.96) * 100).toFixed(1)}%
-                </strong>
+          {/* ACTIONABLE RECOMMENDATION (The Centerpiece for Decision Makers) */}
+          <div
+            className={`p-4 rounded-xl border-2 transition-all ${
+              isRed
+                ? "bg-rose-950/25 border-rose-500/80 shadow-[inset_0_0_20px_rgba(244,63,94,0.12)]"
+                : "bg-cyan-950/25 border-cyan-500/70 shadow-[inset_0_0_20px_rgba(6,182,212,0.1)]"
+            }`}
+          >
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider mb-2">
+              <ShieldAlert className={`w-4 h-4 ${isRed ? "text-rose-400" : "text-cyan-400"}`} />
+              <span className={isRed ? "text-rose-300" : "text-cyan-300"}>
+                RECOMENDACIÓN OPERATIVA PARA LA TOMA DE DECISIONES
               </span>
             </div>
-            <div className="text-slate-100 text-sm font-semibold leading-relaxed">
-              &gt; {event.headline}
-            </div>
+            <p className="text-slate-100 text-xs sm:text-sm font-semibold leading-relaxed">
+              {intel.recommendation}
+            </p>
           </div>
 
-          {/* Logos Entropy Breakdown Gauges */}
+          {/* 3 Decision Core Cards: Affected Asset, Location, Scope */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="p-3 rounded bg-slate-900/40 border border-slate-800 flex flex-col gap-1.5">
-              <div className="flex justify-between items-center text-slate-400 text-[10px]">
-                <span className="flex items-center gap-1">
-                  <Flame className="w-3.5 h-3.5 text-rose-400" />
-                  CARGA TÉRMICA (Ω)
-                </span>
-                <span className="text-rose-400 font-bold">
-                  {event.metrics.omega_index.toFixed(3)}
-                </span>
+            <div className="p-3.5 rounded-xl bg-slate-900/50 border border-slate-800 flex flex-col justify-between">
+              <span className="text-slate-500 text-[10px] uppercase font-bold flex items-center gap-1 mb-1">
+                <Layers className="w-3.5 h-3.5 text-rose-400" />
+                ACTIVO / OBJETIVO AFECTADO
+              </span>
+              <div className="font-bold text-slate-100 text-xs sm:text-sm truncate">
+                {intel.affectedAsset}
               </div>
-              <div className="w-full bg-slate-800 h-2 rounded overflow-hidden">
-                <div
-                  className="bg-rose-500 h-full"
-                  style={{ width: `${Math.min(100, event.metrics.omega_index * 100)}%` }}
-                />
-              </div>
-              <span className="text-[9px] text-slate-500">Índice total de entropía del nodo</span>
-            </div>
-
-            <div className="p-3 rounded bg-slate-900/40 border border-slate-800 flex flex-col gap-1.5">
-              <div className="flex justify-between items-center text-slate-400 text-[10px]">
-                <span className="flex items-center gap-1">
-                  <Activity className="w-3.5 h-3.5 text-cyan-400" />
-                  FRICCIÓN SOCIAL
-                </span>
-                <span className="text-cyan-400 font-bold">
-                  {event.metrics.social_friction.toFixed(3)}
-                </span>
-              </div>
-              <div className="w-full bg-slate-800 h-2 rounded overflow-hidden">
-                <div
-                  className="bg-cyan-500 h-full"
-                  style={{ width: `${Math.min(100, event.metrics.social_friction * 100)}%` }}
-                />
-              </div>
-              <span className="text-[9px] text-slate-500">Hostilidad y pánico operativo</span>
-            </div>
-
-            <div className="p-3 rounded bg-slate-900/40 border border-slate-800 flex flex-col gap-1.5">
-              <div className="flex justify-between items-center text-slate-400 text-[10px]">
-                <span className="flex items-center gap-1">
-                  <Cpu className="w-3.5 h-3.5 text-amber-400" />
-                  INERCIA ESTRUCTURAL
-                </span>
-                <span className="text-amber-400 font-bold">
-                  {event.metrics.structural_inertia.toFixed(3)}
-                </span>
-              </div>
-              <div className="w-full bg-slate-800 h-2 rounded overflow-hidden">
-                <div
-                  className="bg-amber-500 h-full"
-                  style={{ width: `${Math.min(100, event.metrics.structural_inertia * 100)}%` }}
-                />
-              </div>
-              <span className="text-[9px] text-slate-500">Degradación sistémica de infraestructura</span>
-            </div>
-          </div>
-
-          {/* REAL FORENSIC EVIDENCE OF THE EVENT */}
-          <div className="rounded border border-cyan-900/60 bg-black/95 p-4 space-y-3 shadow-inner">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-2 text-cyan-400">
-                <Terminal className="w-4 h-4" />
-                <span className="font-bold tracking-wider uppercase text-xs">
-                  EVIDENCIA TÉCNICA REAL // VOLCADO DE TELEMETRÍA Y SENSORES
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400">
-                  VECTOR: <strong className="text-emerald-400">{event.evidence?.detection_vector}</strong>
-                </span>
-                <button
-                  onClick={handleCopyEvidence}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold transition-colors cursor-pointer"
-                >
-                  {copied ? (
-                    <Check className="w-3 h-3 text-emerald-400" />
-                  ) : (
-                    <Copy className="w-3 h-3" />
-                  )}
-                  <span>{copied ? "COPIADO" : "COPIAR TRAZA"}</span>
-                </button>
+              <div className="text-[10px] text-slate-400 mt-1">
+                {intel.cveId ? `CVE Oficial: ${intel.cveId}` : intel.impactScope}
               </div>
             </div>
 
-            <pre className="p-3 rounded bg-slate-950 border border-slate-800 text-emerald-300 font-mono text-[11px] leading-relaxed overflow-x-auto whitespace-pre-wrap select-text">
-              {event.evidence?.raw_evidence || "No raw forensic log captured for this frame."}
-            </pre>
-
-            {/* Chronological Forensic Timeline */}
-            {event.evidence?.timeline && event.evidence.timeline.length > 0 && (
-              <div className="p-3 rounded bg-slate-900/60 border border-slate-800 space-y-1.5">
-                <span className="text-[10px] text-cyan-400 font-bold uppercase flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5" />
-                  SECUENCIA CRONOLÓGICA DEL SUCESO:
-                </span>
-                <div className="space-y-1">
-                  {event.evidence.timeline.map((step, idx) => (
-                    <div key={idx} className="flex items-start gap-3 text-[11px]">
-                      <span className="text-cyan-300 font-bold shrink-0 w-24">
-                        [{step.offset}]
-                      </span>
-                      <span className="text-slate-200">{step.event}</span>
-                    </div>
-                  ))}
-                </div>
+            <div className="p-3.5 rounded-xl bg-slate-900/50 border border-slate-800 flex flex-col justify-between">
+              <span className="text-slate-500 text-[10px] uppercase font-bold flex items-center gap-1 mb-1">
+                <MapPin className="w-3.5 h-3.5 text-cyan-400" />
+                UBICACIÓN &amp; COORDENADAS
+              </span>
+              <div className="font-bold text-slate-100 text-xs sm:text-sm">
+                {intel.locationLabel}
               </div>
-            )}
-
-            {/* Affected Entities Chips */}
-            {event.evidence?.entities && event.evidence.entities.length > 0 && (
-              <div className="space-y-1.5 pt-1">
-                <span className="text-[10px] text-slate-400 font-semibold uppercase block">
-                  ENTIDADES, OPERADORES Y SISTEMAS COMPROMETIDOS:
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {event.evidence.entities.map((entity, i) => (
-                    <span
-                      key={i}
-                      className="px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-slate-200 text-[10px] font-semibold"
-                    >
-                      {entity}
-                    </span>
-                  ))}
-                </div>
+              <div className="text-[10px] text-cyan-400 font-mono mt-1">
+                {event.geo ? `${event.geo.lat.toFixed(2)}° N, ${event.geo.lng.toFixed(2)}° E` : "Global"}
               </div>
-            )}
+            </div>
 
-            {/* Source Reference & SHA256 */}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500 pt-2 border-t border-slate-900">
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
-                FUENTE OFICIAL:{" "}
+            <div className="p-3.5 rounded-xl bg-slate-900/50 border border-slate-800 flex flex-col justify-between">
+              <span className="text-slate-500 text-[10px] uppercase font-bold flex items-center gap-1 mb-1">
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                FUENTE &amp; VERIFICACIÓN
+              </span>
+              <div className="font-bold text-emerald-300 text-xs truncate">
+                {intel.sourceLabel}
+              </div>
+              <div className="mt-1">
                 {event.evidence?.source_url?.startsWith("http") ? (
                   <a
                     href={event.evidence.source_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-emerald-300 hover:text-emerald-200 underline font-bold"
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-cyan-400 hover:text-cyan-300 underline"
                   >
-                    {event.evidence.source_url} ↗
+                    Abrir reporte original →
                   </a>
                 ) : (
-                  <span className="text-cyan-300">{event.evidence?.source_url}</span>
+                  <span className="text-[10px] text-slate-500">Fuente oficial verificada</span>
                 )}
-              </span>
-              <span className="truncate max-w-md">
-                SHA-256: {event.evidence?.sha256_fingerprint || "VERIFIED"}
-              </span>
+              </div>
             </div>
           </div>
 
-          {/* Mitigation Directive & Action Taken */}
-          <div className="p-3.5 rounded bg-black/60 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div>
-              <span className="text-slate-500 text-[10px] uppercase font-bold block">
-                DIRECTIVA EJECUTADA POR LOGOS ENGINE
-              </span>
-              <div
-                className={`text-xs font-bold font-mono ${
-                  isRed ? "text-rose-400" : isYellow ? "text-amber-400" : "text-emerald-400"
-                }`}
-              >
-                {event.neutralized_action}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <button
-                onClick={handleDownloadDump}
-                className="flex items-center gap-1.5 px-3 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors w-full sm:w-auto justify-center cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>EXPORTAR JSON FORENSE</span>
-              </button>
-
+          {/* Action Buttons Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
+            <div className="flex items-center gap-2 flex-1 sm:flex-initial">
               <button
                 onClick={handleIsolate}
                 disabled={mitigating}
-                className="flex items-center gap-1.5 px-3 py-2 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-600 text-rose-200 hover:text-white text-xs font-bold transition-colors w-full sm:w-auto justify-center cursor-pointer disabled:opacity-50"
+                className={`flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                  event.mitigated_by_soc
+                    ? "bg-emerald-950/70 border border-emerald-500 text-emerald-300"
+                    : "bg-rose-950/80 hover:bg-rose-900 border border-rose-500 text-rose-200 hover:text-white shadow-lg shadow-rose-950/40"
+                }`}
               >
-                <Lock className="w-3.5 h-3.5 text-rose-400" />
+                <Lock className="w-4 h-4" />
                 <span>
-                  {mitigating ? "EJECUTANDO..." : "EJECUTAR AISLAMIENTO WU-WEI"}
+                  {event.mitigated_by_soc
+                    ? "AMENAZA CONTENIDA ✓"
+                    : mitigating
+                    ? "CONTENIENDO..."
+                    : "CONTENER AMENAZA / AISLAR"}
                 </span>
+              </button>
+
+              {event.evidence?.source_url?.startsWith("http") && (
+                <a
+                  href={event.evidence.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-500 text-cyan-200 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>VERIFICAR FUENTE</span>
+                </a>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowTechnicalLog(!showTechnicalLog)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                <span>{showTechnicalLog ? "OCULTAR REGISTRO TÉCNICO" : "VER LOG TÉCNICO & FORENSE"}</span>
+                {showTechnicalLog ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+
+              <button
+                onClick={handleDownloadDump}
+                className="p-2 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                title="Descargar JSON Forense Completo"
+              >
+                <Download className="w-4 h-4" />
               </button>
             </div>
           </div>
-        </div>
 
-        {/* Modal Footer */}
-        <div className="px-4 py-2.5 bg-slate-900/90 border-t border-slate-800 text-[10px] text-slate-400 flex justify-between items-center">
-          <span>SYNTERGIC ZERO-TRUST IDS // FORENSIC ENGINE v2.0</span>
-          <button
-            onClick={onClose}
-            className="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 uppercase font-bold cursor-pointer"
-          >
-            CERRAR [ESC]
-          </button>
+          {/* Collapsible Technical Audit Drawer (For deep dive / logs) */}
+          {showTechnicalLog && (
+            <div className="mt-3 p-4 rounded-xl border border-slate-800 bg-black/90 space-y-3 font-mono text-[11px] animate-fadeIn">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-cyan-400 font-bold flex items-center gap-1.5 uppercase text-xs">
+                  <Terminal className="w-3.5 h-3.5" />
+                  REGISTRO TÉCNICO DE TELEMETRÍA (AUDIT TRAIL)
+                </span>
+                <button
+                  onClick={handleCopyEvidence}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-700 cursor-pointer"
+                >
+                  {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  <span>{copied ? "COPIADO" : "COPIAR LOG"}</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-400 text-[10px]">
+                <div>
+                  <span className="text-slate-500">HUELLA CRIPTOGRÁFICA SHA-256:</span>
+                  <div className="text-slate-300 font-mono truncate">
+                    {event.evidence?.sha256_fingerprint || "N/A"}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-slate-500">VECTOR DE DETECCIÓN:</span>
+                  <div className="text-slate-300 font-mono truncate">
+                    {event.evidence?.detection_vector || "LIVE_OSINT_INGEST"}
+                  </div>
+                </div>
+              </div>
+
+              <pre className="text-emerald-300/95 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto p-3 bg-black/60 rounded border border-slate-900 select-text">
+                {event.evidence?.raw_evidence || "No raw forensic capture attached."}
+              </pre>
+
+              {event.evidence?.timeline && event.evidence.timeline.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-slate-900">
+                  <span className="text-slate-400 font-bold uppercase text-[10px] flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-cyan-400" />
+                    CRONOLOGÍA FORENSE REGISTRADA
+                  </span>
+                  <div className="space-y-1">
+                    {event.evidence.timeline.map((step, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-[10px]">
+                        <span className="text-cyan-400 font-bold shrink-0">{step.offset}:</span>
+                        <span className="text-slate-300">{step.event}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

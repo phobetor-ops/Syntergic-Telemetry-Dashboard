@@ -1,183 +1,240 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { SystemState, ThreatLevel } from "@/types/telemetry";
-import { 
-  ShieldAlert, 
-  ShieldCheck, 
-  Shield, 
-  Radio, 
-  Volume2, 
-  VolumeX, 
+import React, { useState, useEffect, useMemo } from "react";
+import { SystemState, TelemetryRecord, ThreatLevel } from "@/types/telemetry";
+import { analyzeRecordForDecision } from "@/utils/intelligenceFormatter";
+import {
+  ShieldAlert,
+  ShieldCheck,
+  Radio,
+  Volume2,
+  VolumeX,
   AlertTriangle,
-  Zap
+  Crosshair,
+  Clock,
 } from "lucide-react";
 
 interface NetworkStatusHeaderProps {
   systemState: SystemState;
+  telemetryList?: TelemetryRecord[];
   connected: boolean;
   latencyMs: number;
   soundEnabled: boolean;
   onToggleSound: () => void;
-  onTriggerSpike: () => void;
+  onTriggerSpike?: () => void;
 }
 
 export const NetworkStatusHeader: React.FC<NetworkStatusHeaderProps> = ({
   systemState,
+  telemetryList = [],
   connected,
-  latencyMs,
   soundEnabled,
   onToggleSound,
-  onTriggerSpike,
 }) => {
-  const [currentTime, setCurrentTime] = useState<string>("");
+  const [argTime, setArgTime] = useState<string>("");
 
   useEffect(() => {
     const updateClock = () => {
-      const now = new Date();
-      setCurrentTime(now.toISOString().replace("T", " ").substring(0, 19) + " UTC");
+      try {
+        const now = new Date();
+        const formatted = new Intl.DateTimeFormat("es-AR", {
+          timeZone: "America/Argentina/Buenos_Aires",
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(now);
+        setArgTime(`${formatted} ART`);
+      } catch {
+        setArgTime(new Date().toLocaleTimeString());
+      }
     };
     updateClock();
     const timer = setInterval(updateClock, 1000);
     return () => clearInterval(timer);
   }, []);
 
-  const level: ThreatLevel = systemState.threat_level;
+  const stats = useMemo(() => {
+    let criticalCount = 0;
+    let zeroDayOrCvss9Count = 0;
+    let elevatedCount = 0;
 
-  // Visual style config according to threat level
+    for (const rec of telemetryList) {
+      if (rec.mitigated_by_soc) continue;
+      const info = analyzeRecordForDecision(rec);
+      if (info.severityLabel === "CRÍTICO") {
+        criticalCount++;
+      } else if (info.severityLabel === "OBSERVACIÓN") {
+        elevatedCount++;
+      }
+      if (info.isZeroDay || (info.cvssScore !== null && info.cvssScore >= 9.0)) {
+        zeroDayOrCvss9Count++;
+      }
+    }
+    return {
+      criticalCount,
+      zeroDayOrCvss9Count,
+      elevatedCount,
+      total: telemetryList.length,
+    };
+  }, [telemetryList]);
+
+  const effectiveLevel: ThreatLevel =
+    stats.zeroDayOrCvss9Count > 0 || stats.criticalCount >= 5
+      ? "RED"
+      : stats.criticalCount > 0 || stats.elevatedCount > 0
+      ? "YELLOW"
+      : systemState.threat_level;
+
   const statusStyles = {
     GREEN: {
-      border: "border-emerald-500/50 border-glow-green",
-      bg: "bg-emerald-950/20",
-      text: "text-emerald-400 glow-green",
+      border: "border-emerald-500/50 shadow-[0_0_25px_rgba(16,185,129,0.12)]",
+      bg: "bg-gradient-to-r from-emerald-950/30 via-slate-950/90 to-slate-950/90",
+      text: "text-emerald-400",
       badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
-      icon: <ShieldCheck className="w-8 h-8 text-emerald-400 animate-pulse" />,
-      tag: "NOMINAL I/O",
-      pulseColor: "bg-emerald-500",
-      accentBg: "bg-emerald-500/10",
+      icon: <ShieldCheck className="w-7 h-7 text-emerald-400" />,
+      label: "PANORAMA ESTABLE",
+      headline: "SIN INCIDENTES CRÍTICOS INMEDIATOS EN LOS 7 FRENTES",
     },
     YELLOW: {
-      border: "border-amber-500/60 border-glow-yellow",
-      bg: "bg-amber-950/30",
-      text: "text-amber-400 glow-yellow",
+      border: "border-amber-500/60 shadow-[0_0_25px_rgba(245,158,11,0.14)]",
+      bg: "bg-gradient-to-r from-amber-950/35 via-slate-950/90 to-slate-950/90",
+      text: "text-amber-400",
       badge: "bg-amber-500/20 text-amber-300 border-amber-500/50",
-      icon: <AlertTriangle className="w-8 h-8 text-amber-400 animate-pulse" />,
-      tag: "RATE-LIMITING",
-      pulseColor: "bg-amber-500",
-      accentBg: "bg-amber-500/10",
+      icon: <AlertTriangle className="w-7 h-7 text-amber-400" />,
+      label: "VIGILANCIA ACTIVA",
+      headline: `${stats.criticalCount} EVENTOS CRÍTICOS Y ${stats.elevatedCount} EN OBSERVACIÓN A NIVEL GLOBAL`,
     },
     RED: {
-      border: "border-rose-500 border-glow-red animate-pulse-fast",
-      bg: "bg-rose-950/40",
-      text: "text-rose-400 glow-red animate-pulse",
-      badge: "bg-rose-500/30 text-rose-200 border-rose-500 animate-strobe",
-      icon: <ShieldAlert className="w-8 h-8 text-rose-400 animate-strobe" />,
-      tag: "WU-WEI PROTOCOL ENGAGED",
-      pulseColor: "bg-rose-500",
-      accentBg: "bg-rose-500/20",
+      border: "border-rose-500/80 shadow-[0_0_30px_rgba(244,63,94,0.22)]",
+      bg: "bg-gradient-to-r from-rose-950/45 via-slate-950/95 to-slate-950/90",
+      text: "text-rose-400",
+      badge: "bg-rose-500/30 text-rose-200 border-rose-500",
+      icon: <ShieldAlert className="w-7 h-7 text-rose-400 animate-pulse" />,
+      label: "PRIORIDAD ALTA",
+      headline:
+        stats.zeroDayOrCvss9Count > 0
+          ? `ATENCIÓN: ${stats.zeroDayOrCvss9Count} ZERO-DAYS / CVSS ≥ 9.0 Y ${stats.criticalCount} INCIDENTES CRÍTICOS ACTIVOS`
+          : `ATENCIÓN: ${stats.criticalCount} INCIDENTES CRÍTICOS ACTIVOS EN MONITOREO GLOBAL`,
     },
-  }[level];
+  }[effectiveLevel];
 
   return (
-    <header className="w-full flex flex-col gap-3">
-      {/* Top telemetry bar */}
-      <div className="flex flex-wrap items-center justify-between text-xs text-slate-400 border-b border-slate-800/80 pb-2 px-1 font-mono">
+    <header className="w-full flex flex-col gap-2.5">
+      {/* Top Cyberpunk Status Strip */}
+      <div className="flex flex-wrap items-center justify-between text-xs text-slate-400 border-b border-cyan-950/80 pb-2 px-1 font-mono">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 font-bold tracking-widest text-slate-200">
+          <div className="flex items-center gap-2 font-bold tracking-wider text-cyan-300">
             <Radio className="w-4 h-4 text-cyan-400 animate-pulse" />
-            <span>SYNTERGIC IDS // EARLY WARNING SYSTEM</span>
+            <span>SYNTERGIC // CENTRO DE INTELIGENCIA Y MONITOREO GLOBAL</span>
           </div>
-          <span className="text-slate-600">|</span>
-          <span className="text-slate-400 tracking-wider">NODE: OMEGA-DISPATCHER-01</span>
+          <span className="hidden sm:inline text-slate-700">|</span>
+          <span className="hidden sm:inline text-slate-400 text-[11px]">
+            15 FUENTES OFICIALES EN VIVO • 7 FRENTES ESTRATÉGICOS
+          </span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 px-2.5 py-0.5 rounded">
             <span
               className={`w-2 h-2 rounded-full ${
-                connected ? "bg-emerald-400 animate-ping" : "bg-rose-500"
+                connected ? "bg-emerald-400 animate-pulse" : "bg-amber-400"
               }`}
             />
-            <span className={connected ? "text-emerald-400" : "text-rose-400"}>
-              {connected ? `WS: CONNECTED (${latencyMs}ms)` : "WS: RECONNECTING..."}
+            <span className="text-[11px] text-emerald-300 font-bold">
+              {connected ? "DATOS EN VIVO ACTIVOS" : "SINCRONIZANDO..."}
             </span>
           </div>
 
-          <span className="text-slate-600">|</span>
-          <span className="text-slate-300">{currentTime || "SYNCING..."}</span>
+          <div className="hidden md:flex items-center gap-1.5 text-slate-300 bg-slate-900/80 border border-slate-800 px-2.5 py-0.5 rounded text-[11px]">
+            <Clock className="w-3 h-3 text-cyan-400" />
+            <span>{argTime || "SINCRONIZANDO..."}</span>
+          </div>
 
-          <span className="text-slate-600">|</span>
           <button
             onClick={onToggleSound}
-            title={soundEnabled ? "Mute SOC Audio" : "Enable SOC Audio Synth"}
-            className="flex items-center gap-1 px-2 py-0.5 rounded border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white transition-colors"
+            title={soundEnabled ? "Silenciar alertas sonoras" : "Activar alertas sonoras"}
+            className="flex items-center gap-1 px-2.5 py-0.5 rounded border border-slate-800 bg-slate-900/80 hover:border-cyan-500/60 text-slate-300 hover:text-white transition-colors cursor-pointer"
           >
             {soundEnabled ? (
               <>
                 <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
-                <span className="text-[10px] text-cyan-400 font-bold">AUDIO ON</span>
+                <span className="text-[10px] text-cyan-300 font-bold">SONIDO ON</span>
               </>
             ) : (
               <>
                 <VolumeX className="w-3.5 h-3.5 text-slate-500" />
-                <span className="text-[10px] text-slate-500">AUDIO OFF</span>
+                <span className="text-[10px] text-slate-500">SONIDO OFF</span>
               </>
             )}
           </button>
         </div>
       </div>
 
-      {/* Massive Dynamic Threat Level Indicator Banner */}
+      {/* Main Executive Banner */}
       <div
-        className={`w-full rounded-lg border-2 p-4 md:p-6 transition-all duration-300 flex flex-col md:flex-row items-center justify-between gap-4 ${statusStyles.border} ${statusStyles.bg}`}
+        className={`w-full rounded-xl border p-4 md:p-5 transition-all duration-300 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 ${statusStyles.border} ${statusStyles.bg}`}
       >
-        <div className="flex items-center gap-4 w-full md:w-auto">
-          <div className="p-3 rounded-md bg-black/60 border border-slate-800 flex items-center justify-center shrink-0">
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div className="p-3 rounded-lg bg-slate-950/90 border border-slate-800 flex items-center justify-center shrink-0">
             {statusStyles.icon}
           </div>
 
           <div className="flex flex-col">
-            <div className="flex items-center gap-3">
-              <span className="text-xs uppercase tracking-widest text-slate-400 font-semibold">
-                SYSTEM INTRUSION & ENTROPY TELEMETRY
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] uppercase tracking-widest text-cyan-400 font-mono font-bold flex items-center gap-1">
+                <Crosshair className="w-3.5 h-3.5" />
+                PANORAMA DE DECISIONES EN TIEMPO REAL
               </span>
               <span
-                className={`px-2.5 py-0.5 text-xs font-mono font-bold uppercase rounded border ${statusStyles.badge}`}
+                className={`px-2 py-0.5 text-[10px] font-mono font-bold uppercase rounded border ${statusStyles.badge}`}
               >
-                LEVEL: {level}
+                {statusStyles.label}
               </span>
             </div>
 
             <h1
-              className={`text-xl sm:text-2xl md:text-3xl font-extrabold font-mono tracking-tight mt-1 ${statusStyles.text}`}
+              className={`text-base sm:text-xl md:text-2xl font-extrabold font-mono tracking-tight mt-1 ${statusStyles.text}`}
             >
-              {systemState.mitigation_directive}
+              {statusStyles.headline}
             </h1>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Selecciona cualquier frente estratégico o evento en el mapa para ver qué ocurrió, qué activos afecta y la recomendación operativa.
+            </p>
           </div>
         </div>
 
-        {/* Quick Actions & Moving Average Pill */}
-        <div className="flex items-center gap-3 w-full md:w-auto justify-end">
-          <div className="flex flex-col items-end px-4 py-2 rounded bg-black/50 border border-slate-800 text-right">
-            <span className="text-[10px] uppercase text-slate-400 tracking-wider">
-              MOVING AVG ENTROPY (Ω)
+        {/* Actionable Executive Counters */}
+        <div className="grid grid-cols-3 gap-2.5 w-full lg:w-auto shrink-0 font-mono">
+          <div className="px-3.5 py-2 rounded-lg bg-slate-950/90 border border-rose-500/40 flex flex-col items-center lg:items-end justify-center">
+            <span className="text-[10px] uppercase text-rose-300/90 tracking-wider font-bold">
+              ZERO-DAYS / CVSS ≥ 9
             </span>
-            <div className="flex items-baseline gap-1">
-              <span className={`text-2xl font-bold font-mono ${statusStyles.text}`}>
-                {systemState.moving_avg_omega.toFixed(3)}
-              </span>
-              <span className="text-xs text-slate-500 font-mono">/ 1.000</span>
-            </div>
+            <span className="text-xl sm:text-2xl font-extrabold text-rose-400">
+              {stats.zeroDayOrCvss9Count}
+            </span>
           </div>
 
-          <button
-            onClick={onTriggerSpike}
-            className="flex items-center gap-1.5 px-3 py-3 rounded bg-rose-950/60 hover:bg-rose-900/80 border border-rose-600/70 hover:border-rose-400 text-rose-200 text-xs font-mono font-bold tracking-wider transition-all shadow-lg hover:shadow-rose-900/50 active:scale-95"
-            title="Inject an intentional entropy spike to test RED ALERT protocol"
-          >
-            <Zap className="w-4 h-4 text-rose-400 animate-bounce" />
-            <span className="hidden sm:inline">FORCE SPIKE</span>
-          </button>
+          <div className="px-3.5 py-2 rounded-lg bg-slate-950/90 border border-amber-500/40 flex flex-col items-center lg:items-end justify-center">
+            <span className="text-[10px] uppercase text-amber-300/90 tracking-wider font-bold">
+              CRÍTICOS ACTIVOS
+            </span>
+            <span className="text-xl sm:text-2xl font-extrabold text-amber-400">
+              {stats.criticalCount}
+            </span>
+          </div>
+
+          <div className="px-3.5 py-2 rounded-lg bg-slate-950/90 border border-cyan-500/40 flex flex-col items-center lg:items-end justify-center">
+            <span className="text-[10px] uppercase text-cyan-300/90 tracking-wider font-bold">
+              EVENTOS EN VIVO
+            </span>
+            <span className="text-xl sm:text-2xl font-extrabold text-cyan-300">
+              {stats.total}
+            </span>
+          </div>
         </div>
       </div>
     </header>

@@ -1,95 +1,161 @@
 "use client";
 
-import React from "react";
-import { SystemState } from "@/types/telemetry";
-import { Server, Database, Cpu, Radio, Shield, Zap } from "lucide-react";
+import React, { useMemo } from "react";
+import { SystemState, TelemetryRecord } from "@/types/telemetry";
+import { analyzeRecordForDecision } from "@/utils/intelligenceFormatter";
+import { ShieldAlert, Cloud, Flame, Globe } from "lucide-react";
 
 interface SystemMatrixStatsProps {
   systemState: SystemState;
   connected: boolean;
   totalRecords: number;
+  telemetryList?: TelemetryRecord[];
 }
 
 export const SystemMatrixStats: React.FC<SystemMatrixStatsProps> = ({
-  systemState,
-  connected,
-  totalRecords,
+  telemetryList = [],
 }) => {
-  const isRed = systemState.threat_level === "RED";
-  const isYellow = systemState.threat_level === "YELLOW";
+  const domainSummary = useMemo(() => {
+    const cyber = { total: 0, crit: 0, zeroDays: 0 };
+    const cloud = { total: 0, crit: 0 };
+    const earth = { total: 0, crit: 0 };
+    const geoMacro = { total: 0, crit: 0 };
+
+    for (const rec of telemetryList) {
+      if (rec.mitigated_by_soc) continue;
+      const front = rec.evidence?.strategic_front || "CYBER_WARFARE";
+      const info = analyzeRecordForDecision(rec);
+      const isCrit = info.severityLabel === "CRÍTICO";
+
+      if (front === "CYBER_WARFARE") {
+        cyber.total++;
+        if (isCrit) cyber.crit++;
+        if (info.isZeroDay || (info.cvssScore !== null && info.cvssScore >= 9.0)) {
+          cyber.zeroDays++;
+        }
+      } else if (front === "INFRASTRUCTURE_CLOUD") {
+        cloud.total++;
+        if (isCrit) cloud.crit++;
+      } else if (front === "GEOPHYSICAL_CLIMATE" || front === "SPACE_WEATHER_GRID") {
+        earth.total++;
+        if (isCrit) earth.crit++;
+      } else {
+        geoMacro.total++;
+        if (isCrit) geoMacro.crit++;
+      }
+    }
+
+    return { cyber, cloud, earth, geoMacro };
+  }, [telemetryList]);
 
   return (
-    <div className="w-full grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-xs">
-      {/* Celery Cluster */}
-      <div className="p-3 rounded bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-1">
-        <div className="flex items-center justify-between text-slate-400 text-[10px]">
-          <span className="flex items-center gap-1">
-            <Cpu className="w-3 h-3 text-cyan-400" />
-            WORKER ARCHITECTURE
-          </span>
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-        </div>
-        <div>
-          <div className="text-slate-200 font-bold">2 ASYNC WORKERS</div>
-          <div className="text-[10px] text-slate-500">SENSOR + LOGOS ENGINE</div>
-        </div>
-      </div>
-
-      {/* Redis Broker */}
-      <div className="p-3 rounded bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-1">
-        <div className="flex items-center justify-between text-slate-400 text-[10px]">
-          <span className="flex items-center gap-1">
-            <Database className="w-3 h-3 text-amber-400" />
-            MESSAGE BROKER
-          </span>
-          <span className="text-emerald-400 font-bold text-[10px]">REDIS 7</span>
-        </div>
-        <div>
-          <div className="text-slate-200 font-bold truncate">PUB/SUB // CH-01</div>
-          <div className="text-[10px] text-slate-500">
-            TOTAL PACKETS: {systemState.total_injections_processed || totalRecords}
-          </div>
-        </div>
-      </div>
-
-      {/* Wu-Wei Mitigation */}
-      <div className="p-3 rounded bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-1">
-        <div className="flex items-center justify-between text-slate-400 text-[10px]">
-          <span className="flex items-center gap-1">
-            <Shield className="w-3 h-3 text-purple-400" />
-            ZERO-TRUST POLICY
+    <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 font-mono text-xs">
+      {/* Card 1: Cyber Defense & Zero-Days */}
+      <div className="p-3.5 rounded-xl bg-slate-950/85 border border-rose-500/35 hover:border-rose-500/70 transition-all shadow-[0_0_20px_rgba(244,63,94,0.07)] flex flex-col justify-between gap-2">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-rose-300 font-bold text-[11px] uppercase tracking-wider">
+            <ShieldAlert className="w-4 h-4 text-rose-400" />
+            CIBERDEFENSA &amp; 0-DAYS
           </span>
           <span
-            className={`font-bold text-[10px] ${
-              isRed ? "text-rose-400 animate-pulse" : isYellow ? "text-amber-400" : "text-emerald-400"
+            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+              domainSummary.cyber.crit > 0
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
             }`}
           >
-            {isRed ? "ACTIVE QUARANTINE" : isYellow ? "RATE-LIMITED" : "STEADY PASS"}
+            {domainSummary.cyber.crit} CRÍTICOS
           </span>
         </div>
         <div>
-          <div className="text-slate-200 font-bold">
-            {isRed ? "WU-WEI PROTOCOL" : isYellow ? "ADAPTIVE LIMITING" : "PASSIVE IDS"}
+          <div className="text-slate-100 font-extrabold text-sm">
+            {domainSummary.cyber.zeroDays} Zero-Days / CVEs Prioritarios
           </div>
-          <div className="text-[10px] text-slate-500">ISOLATION SANDBOX ACTIVE</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            {domainSummary.cyber.total} alertas en CISA KEV, Ransomware &amp; Botnets C2
+          </div>
         </div>
       </div>
 
-      {/* Dispatcher WebSocket */}
-      <div className="p-3 rounded bg-slate-950/70 border border-slate-800 flex flex-col justify-between gap-1">
-        <div className="flex items-center justify-between text-slate-400 text-[10px]">
-          <span className="flex items-center gap-1">
-            <Radio className="w-3 h-3 text-emerald-400" />
-            ZERO TRUST DISPATCHER
+      {/* Card 2: Cloud & Backbone Infrastructure */}
+      <div className="p-3.5 rounded-xl bg-slate-950/85 border border-cyan-500/35 hover:border-cyan-500/70 transition-all shadow-[0_0_20px_rgba(6,182,212,0.07)] flex flex-col justify-between gap-2">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-cyan-300 font-bold text-[11px] uppercase tracking-wider">
+            <Cloud className="w-4 h-4 text-cyan-400" />
+            INFRAESTRUCTURA CLOUD
           </span>
-          <span className="text-cyan-400 font-bold text-[10px]">FASTAPI WS</span>
+          <span
+            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+              domainSummary.cloud.crit > 0
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                : "bg-cyan-500/20 text-cyan-300 border-cyan-500/40"
+            }`}
+          >
+            {domainSummary.cloud.crit > 0
+              ? `${domainSummary.cloud.crit} CAÍDA MAYOR`
+              : "OPERATIVO"}
+          </span>
         </div>
         <div>
-          <div className="text-slate-200 font-bold">
-            {connected ? "LIVE TELEMETRY STREAM" : "OFFLINE BUFFER"}
+          <div className="text-slate-100 font-extrabold text-sm">
+            {domainSummary.cloud.total} Incidentes / Avisos de Red
           </div>
-          <div className="text-[10px] text-slate-500">
-            CLIENTS: {systemState.connected_clients || 1}
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            Monitoreo en vivo de Cloudflare Edge &amp; GitHub Cloud
+          </div>
+        </div>
+      </div>
+
+      {/* Card 3: Seismic, Climate & Space Weather */}
+      <div className="p-3.5 rounded-xl bg-slate-950/85 border border-emerald-500/35 hover:border-emerald-500/70 transition-all shadow-[0_0_20px_rgba(16,185,129,0.07)] flex flex-col justify-between gap-2">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-emerald-300 font-bold text-[11px] uppercase tracking-wider">
+            <Flame className="w-4 h-4 text-emerald-400" />
+            SISMOS, CLIMA &amp; ESPACIO
+          </span>
+          <span
+            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+              domainSummary.earth.crit > 0
+                ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+            }`}
+          >
+            {domainSummary.earth.crit} SEVEROS
+          </span>
+        </div>
+        <div>
+          <div className="text-slate-100 font-extrabold text-sm">
+            {domainSummary.earth.total} Eventos Geofísicos y Solares
+          </div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            USGS Sismología, Desastres ONU (GDACS), NASA &amp; NOAA
+          </div>
+        </div>
+      </div>
+
+      {/* Card 4: Geopolitics, Financial Macro & WHO Health */}
+      <div className="p-3.5 rounded-xl bg-slate-950/85 border border-amber-500/35 hover:border-amber-500/70 transition-all shadow-[0_0_20px_rgba(245,158,11,0.07)] flex flex-col justify-between gap-2">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-amber-300 font-bold text-[11px] uppercase tracking-wider">
+            <Globe className="w-4 h-4 text-amber-400" />
+            GEOPOLÍTICA, MACRO &amp; OMS
+          </span>
+          <span
+            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+              domainSummary.geoMacro.crit > 0
+                ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+            }`}
+          >
+            {domainSummary.geoMacro.crit} PRIORITARIOS
+          </span>
+        </div>
+        <div>
+          <div className="text-slate-100 font-extrabold text-sm">
+            {domainSummary.geoMacro.total} Alertas Globales Activas
+          </div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            BBC, Al Jazeera, Naciones Unidas, CNBC Mercados &amp; OMS
           </div>
         </div>
       </div>

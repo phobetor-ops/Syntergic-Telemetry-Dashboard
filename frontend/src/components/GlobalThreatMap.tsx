@@ -5,6 +5,7 @@ import * as d3Geo from "d3-geo";
 import * as topojson from "topojson-client";
 import worldAtlasData from "@/data/world-110m.json";
 import { TelemetryRecord } from "@/types/telemetry";
+import { analyzeRecordForDecision, FRONT_META } from "@/utils/intelligenceFormatter";
 import {
   Globe,
   MapPin,
@@ -26,9 +27,12 @@ import {
   Crosshair,
   Clock,
   Activity,
-  Cpu,
   Lock,
   ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Layers,
 } from "lucide-react";
 
 interface GlobalThreatMapProps {
@@ -97,6 +101,7 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
   const [copiedLog, setCopiedLog] = useState<boolean>(false);
   const [mitigating, setMitigating] = useState<boolean>(false);
   const [mitigationMsg, setMitigationMsg] = useState<string | null>(null);
+  const [showTechnicalLog, setShowTechnicalLog] = useState<boolean>(false);
 
   // Build unique active nodes keyed by STABLE facility name (never changes ID on stream update)
   const activeNodesMap = useMemo(() => {
@@ -124,9 +129,13 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
   // Auto-select initial highest-entropy node if nothing is locked yet
   useEffect(() => {
     if (!lockedFacility && stableNodes.length > 0) {
-      const highest = [...stableNodes].sort(
-        (a, b) => b.metrics.omega_index - a.metrics.omega_index
-      )[0];
+      const highest = [...stableNodes].sort((a, b) => {
+        const intelA = analyzeRecordForDecision(a);
+        const intelB = analyzeRecordForDecision(b);
+        const prioA = (intelA.isZeroDay ? 10 : 0) + (intelA.cvssScore || 0);
+        const prioB = (intelB.isZeroDay ? 10 : 0) + (intelB.cvssScore || 0);
+        return prioB - prioA;
+      })[0];
       if (highest?.geo?.facility) {
         setLockedFacility(highest.geo.facility);
       }
@@ -143,7 +152,6 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
   // Currently inspected record (always up-to-date for the locked facility, or exact selectedEvent)
   const inspectedRecord = useMemo(() => {
     if (selectedEvent && (!lockedFacility || selectedEvent.geo?.facility === lockedFacility)) {
-      // Return latest state for that facility or the selectedEvent itself
       return activeNodesMap.get(lockedFacility || "") || selectedEvent;
     }
     if (lockedFacility && activeNodesMap.has(lockedFacility)) {
@@ -152,10 +160,26 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
     return stableNodes[0] || null;
   }, [selectedEvent, lockedFacility, activeNodesMap, stableNodes]);
 
-  // Filtered nodes for map rendering (by Severity AND Strategic Front)
+  const inspectedIntel = useMemo(
+    () => (inspectedRecord ? analyzeRecordForDecision(inspectedRecord) : null),
+    [inspectedRecord]
+  );
+
+  // Filtered nodes for map rendering (by Severity / Zero-Days AND Strategic Front)
   const filteredNodes = useMemo(() => {
     return stableNodes.filter((n) => {
-      const matchSev = filterSeverity === "ALL" || n.threat_level === filterSeverity;
+      const intel = analyzeRecordForDecision(n);
+      let matchSev = true;
+      if (filterSeverity === "ZERODAY") {
+        matchSev = intel.isZeroDay || (intel.cvssScore !== null && intel.cvssScore >= 9.0);
+      } else if (filterSeverity === "RED") {
+        matchSev = intel.severityLabel === "CRÍTICO";
+      } else if (filterSeverity === "YELLOW") {
+        matchSev = intel.severityLabel === "OBSERVACIÓN";
+      } else if (filterSeverity === "GREEN") {
+        matchSev = intel.severityLabel === "INFORMATIVO";
+      }
+
       const front = n.evidence?.strategic_front || "CYBER_WARFARE";
       const matchFront = filterFront === "ALL" || front === filterFront;
       return matchSev && matchFront;
@@ -280,10 +304,31 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
       };
     }, [projectionType]);
 
-  // Threat counters
-  const redCount = stableNodes.filter((n) => n.threat_level === "RED").length;
-  const yellowCount = stableNodes.filter((n) => n.threat_level === "YELLOW").length;
-  const greenCount = stableNodes.filter((n) => n.threat_level === "GREEN").length;
+  // Decision counters
+  const zeroDayCount = useMemo(() => {
+    return stableNodes.filter((n) => {
+      const info = analyzeRecordForDecision(n);
+      return info.isZeroDay || (info.cvssScore !== null && info.cvssScore >= 9.0);
+    }).length;
+  }, [stableNodes]);
+
+  const redCount = useMemo(() => {
+    return stableNodes.filter(
+      (n) => analyzeRecordForDecision(n).severityLabel === "CRÍTICO"
+    ).length;
+  }, [stableNodes]);
+
+  const yellowCount = useMemo(() => {
+    return stableNodes.filter(
+      (n) => analyzeRecordForDecision(n).severityLabel === "OBSERVACIÓN"
+    ).length;
+  }, [stableNodes]);
+
+  const greenCount = useMemo(() => {
+    return stableNodes.filter(
+      (n) => analyzeRecordForDecision(n).severityLabel === "INFORMATIVO"
+    ).length;
+  }, [stableNodes]);
 
   // Handlers
   const handleSelectNode = (node: TelemetryRecord) => {
@@ -323,7 +368,7 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
       );
       if (updated) {
         onSelectEvent(updated);
-        setMitigationMsg(`DIRECTIVA ${actionType} EJECUTADA CON ÉXITO`);
+        setMitigationMsg(`ACCION "${actionType}" EJECUTADA SOBRE EL NODO`);
         setTimeout(() => setMitigationMsg(null), 3500);
       }
     } finally {
@@ -337,63 +382,76 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
   };
 
   return (
-    <div className="w-full flex flex-col bg-slate-950/95 border border-slate-800 rounded-lg overflow-hidden shadow-2xl font-mono text-xs">
+    <div className="w-full flex flex-col bg-slate-950/95 border border-slate-800 rounded-xl overflow-hidden shadow-2xl font-mono text-xs">
       {/* TOP BAR: Title, Threat Counters, Projection & Filter Controls */}
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900 border-b border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-900/90 border-b border-slate-800">
         <div className="flex items-center gap-2.5">
           <Globe className="w-4 h-4 text-cyan-400" />
           <div>
             <h2 className="font-bold text-slate-100 uppercase tracking-wider text-xs sm:text-sm">
-              CARTOGRAFÍA GLOBAL DE ENTROPÍA (NATURAL EARTH WGS-84)
+              CARTOGRAFÍA GLOBAL DE AMENAZAS // CENTRO DE RESPUESTA OPERATIVA
             </h2>
             <p className="text-[10px] text-slate-400">
-              Haz clic en cualquier baliza o tarjeta para inspeccionar su procedencia y evidencia forense real
+              Vigilancia geográfica multi-frente en tiempo real. Selecciona una baliza para evaluar impacto y medidas correctivas.
             </p>
           </div>
         </div>
 
         {/* Status Badges & Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* Quick Filter: Zero-Days & CVSS >= 9 */}
           <button
-            onClick={() => setFilterSeverity(filterSeverity === "RED" ? "ALL" : "RED")}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[10px] font-bold transition-all cursor-pointer ${
-              filterSeverity === "RED"
-                ? "bg-rose-500/30 border-rose-400 text-rose-200"
-                : "bg-rose-950/50 border-rose-800/80 text-rose-400 hover:border-rose-500"
+            onClick={() => setFilterSeverity(filterSeverity === "ZERODAY" ? "ALL" : "ZERODAY")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-bold transition-all cursor-pointer ${
+              filterSeverity === "ZERODAY"
+                ? "bg-rose-500/30 border-rose-400 text-rose-200 shadow-md shadow-rose-950/60"
+                : "bg-rose-950/40 border-rose-800/80 text-rose-300 hover:border-rose-500"
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-            {redCount} PICOS CRÍTICOS (RED)
+            {zeroDayCount} ZERO-DAYS / CVSS ≥ 9
+          </button>
+
+          <button
+            onClick={() => setFilterSeverity(filterSeverity === "RED" ? "ALL" : "RED")}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-bold transition-all cursor-pointer ${
+              filterSeverity === "RED"
+                ? "bg-rose-500/30 border-rose-400 text-rose-200"
+                : "bg-slate-900 border-slate-800 text-rose-400 hover:border-rose-700"
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-rose-500" />
+            {redCount} CRÍTICOS
           </button>
 
           <button
             onClick={() => setFilterSeverity(filterSeverity === "YELLOW" ? "ALL" : "YELLOW")}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[10px] font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-bold transition-all cursor-pointer ${
               filterSeverity === "YELLOW"
                 ? "bg-amber-500/30 border-amber-400 text-amber-200"
-                : "bg-amber-950/50 border-amber-800/80 text-amber-400 hover:border-amber-500"
+                : "bg-slate-900 border-slate-800 text-amber-400 hover:border-amber-700"
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-amber-500" />
-            {yellowCount} ELEVADOS (YELLOW)
+            {yellowCount} EN OBSERVACIÓN
           </button>
 
           <button
             onClick={() => setFilterSeverity(filterSeverity === "GREEN" ? "ALL" : "GREEN")}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-[10px] font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-bold transition-all cursor-pointer ${
               filterSeverity === "GREEN"
                 ? "bg-emerald-500/30 border-emerald-400 text-emerald-200"
-                : "bg-emerald-950/50 border-emerald-800/80 text-emerald-400 hover:border-emerald-500"
+                : "bg-slate-900 border-slate-800 text-emerald-400 hover:border-emerald-700"
             }`}
           >
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            {greenCount} ESTABLES (GREEN)
+            {greenCount} INFORMATIVOS
           </button>
 
           {filterSeverity !== "ALL" && (
             <button
               onClick={() => setFilterSeverity("ALL")}
-              className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold"
+              className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold"
             >
               VER TODOS ({stableNodes.length})
             </button>
@@ -805,33 +863,35 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
                       />
 
                       {/* On-Map Label for Selected, Hovered, or Critical Red Nodes */}
-                      {(isSelected || isHovered || isRed) && (
-                        <g transform={`translate(${9 / zoom}, ${-7 / zoom})`}>
-                          <rect
-                            x={0}
-                            y={-9 / zoom}
-                            width={
-                              (node.geo.city.length * 5.2 + 44) / zoom
-                            }
-                            height={13 / zoom}
-                            rx={2 / zoom}
-                            fill={isSelected ? "#083344" : "#020617"}
-                            stroke={isSelected ? "#06b6d4" : primaryColor}
-                            strokeWidth={0.8 / zoom}
-                            opacity={0.92}
-                          />
-                          <text
-                            x={4 / zoom}
-                            y={0}
-                            fill={isSelected ? "#67e8f9" : isRed ? "#fda4af" : "#fde68a"}
-                            fontSize={8.5 / zoom}
-                            fontWeight="bold"
-                            fontFamily="monospace"
-                          >
-                            {node.geo.city.toUpperCase()} [{omega.toFixed(2)}]
-                          </text>
-                        </g>
-                      )}
+                      {(isSelected || isHovered || isRed) && (() => {
+                        const nodeIntel = analyzeRecordForDecision(node);
+                        const tagText = `${node.geo.city.toUpperCase()} [${nodeIntel.shortTag}]`;
+                        return (
+                          <g transform={`translate(${9 / zoom}, ${-7 / zoom})`}>
+                            <rect
+                              x={0}
+                              y={-9 / zoom}
+                              width={(tagText.length * 5.6 + 12) / zoom}
+                              height={13 / zoom}
+                              rx={2 / zoom}
+                              fill={isSelected ? "#083344" : "#020617"}
+                              stroke={isSelected ? "#06b6d4" : primaryColor}
+                              strokeWidth={0.8 / zoom}
+                              opacity={0.94}
+                            />
+                            <text
+                              x={4 / zoom}
+                              y={0}
+                              fill={isSelected ? "#67e8f9" : isRed ? "#fda4af" : "#fde68a"}
+                              fontSize={8.5 / zoom}
+                              fontWeight="bold"
+                              fontFamily="monospace"
+                            >
+                              {tagText}
+                            </text>
+                          </g>
+                        );
+                      })()}
                     </g>
                   );
                 })}
@@ -844,29 +904,29 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-1 font-bold text-slate-300">
                 <Compass className="w-3.5 h-3.5 text-cyan-400" />
-                 LEYENDA:
+                 CLASIFICACIÓN OPERATIVA:
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-rose-500" /> &gt;0.70 Ω (RED)
+              <span className="flex items-center gap-1 text-rose-300 font-bold">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" /> CRÍTICO / ZERO-DAY
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-amber-500" /> 0.40-0.70 Ω (YELLOW)
+              <span className="flex items-center gap-1 text-amber-300">
+                <span className="w-2 h-2 rounded-full bg-amber-500" /> EN OBSERVACIÓN
               </span>
-              <span className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" /> &lt;0.40 Ω (GREEN)
+              <span className="flex items-center gap-1 text-emerald-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" /> INFORMATIVO
               </span>
             </div>
             <div className="flex items-center gap-2 text-slate-500">
               <span>ZOOM: {zoom.toFixed(1)}x</span>
               <span>•</span>
-              <span>CABLES SUBMARINOS: GEODÉSICOS</span>
+              <span>RUTAS SUBMARINAS BGP: ACTIVAS</span>
             </div>
           </div>
         </div>
 
-        {/* RIGHT COLUMN: Integrated Forensic Provenance & Evidence Dossier (5 cols) */}
+        {/* RIGHT COLUMN: Actionable Decision Intelligence & Dossier (5 cols) */}
         <div className="xl:col-span-5 bg-slate-950 flex flex-col justify-between p-4 space-y-3">
-          {inspectedRecord ? (
+          {inspectedRecord && inspectedIntel ? (
             <>
               <div className="space-y-3">
                 {/* Dossier Header */}
@@ -874,7 +934,7 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
                   <div>
                     <div className="flex items-center gap-1.5 text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
                       <Crosshair className="w-3.5 h-3.5" />
-                      <span>EXPEDIENTE FORENSE EN VIVO // PROCEDENCIA DEL NODO</span>
+                      <span>EXPEDIENTE OPERATIVO DE DECISIÓN</span>
                     </div>
                     <h3 className="text-sm font-extrabold text-slate-100 mt-0.5">
                       {inspectedRecord.geo?.facility || "NODO GLOBAL"}
@@ -882,33 +942,33 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mt-0.5">
                       <span className="flex items-center gap-1 text-slate-200 font-semibold">
                         <MapPin className="w-3 h-3 text-cyan-400" />
-                        {inspectedRecord.geo?.city}, {inspectedRecord.geo?.country}
+                        {inspectedIntel.locationLabel}
                       </span>
                       <span>•</span>
                       <span className="text-cyan-400 font-bold">
-                        {inspectedRecord.geo?.lat.toFixed(4)}° N, {inspectedRecord.geo?.lng.toFixed(4)}° E
+                        {inspectedRecord.geo?.lat.toFixed(2)}° N, {inspectedRecord.geo?.lng.toFixed(2)}° E
                       </span>
                     </div>
                   </div>
 
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-extrabold border uppercase ${
-                        inspectedRecord.threat_level === "RED"
-                          ? "bg-rose-500/20 text-rose-300 border-rose-500/50"
-                          : inspectedRecord.threat_level === "YELLOW"
-                          ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
-                          : "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
+                      className={`px-2.5 py-0.5 rounded text-[10px] font-extrabold border uppercase ${
+                        inspectedIntel.severityLabel === "CRÍTICO"
+                          ? "bg-rose-500/25 text-rose-200 border-rose-500/60 shadow-sm shadow-rose-950"
+                          : inspectedIntel.severityLabel === "OBSERVACIÓN"
+                          ? "bg-amber-500/20 text-amber-200 border-amber-500/50"
+                          : "bg-emerald-500/20 text-emerald-200 border-emerald-500/50"
                       }`}
                     >
-                      {inspectedRecord.threat_level} (Ω {inspectedRecord.metrics.omega_index.toFixed(3)})
+                      {inspectedIntel.categoryBadge}
                     </span>
                     <button
                       onClick={() => onOpenFullModal(inspectedRecord)}
                       className="flex items-center gap-1 text-[10px] text-cyan-400 hover:text-cyan-300 font-bold underline cursor-pointer"
                     >
                       <Maximize2 className="w-3 h-3" />
-                      AMPLIAR MODAL
+                      VER EXPEDIENTE COMPLETO
                     </button>
                   </div>
                 </div>
@@ -920,209 +980,149 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
                   </div>
                 )}
 
-                {/* Protocol, Sector & Detection Metadata */}
-                <div className="grid grid-cols-2 gap-2 bg-slate-900/60 border border-slate-800/90 rounded p-2.5 text-[10px]">
-                  <div>
-                    <span className="text-slate-500 block uppercase">PROTOCOLO AFECTADO</span>
-                    <span className="text-slate-200 font-bold truncate block">
-                      {inspectedRecord.evidence?.protocol || "BGP-4 / DWDM TELEMETRY"}
+                {/* Incident Clean Headline & Summary Card */}
+                <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span className="text-cyan-400 font-bold uppercase">
+                      {inspectedIntel.frontLabel}
                     </span>
+                    <span>FUENTE: {inspectedIntel.sourceLabel}</span>
                   </div>
-                  <div>
-                    <span className="text-slate-500 block uppercase">ASN / SECTOR CRÍTICO</span>
-                    <span className="text-cyan-400 font-bold truncate block">
-                      {inspectedRecord.evidence?.asn_or_sector || inspectedRecord.source}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block uppercase">VECTOR DE DETECCIÓN</span>
-                    <span className="text-emerald-400 font-bold truncate block">
-                      {inspectedRecord.evidence?.detection_vector || "PASSIVE_IDS_SENSOR"}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block uppercase">RADIO IMPACTO / CONFIANZA</span>
-                    <span className="text-slate-200 font-bold block">
-                      {inspectedRecord.evidence?.impact_radius_km || 350} km |{" "}
-                      {((inspectedRecord.evidence?.confidence_score || 0.96) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-
-                {/* Incident Headline */}
-                <div className="p-2.5 rounded bg-black/60 border border-slate-800/90">
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
-                    <span>SUCESO DETECTADO [{inspectedRecord.source}]</span>
-                    <span>ID: {inspectedRecord.id}</span>
-                  </div>
-                  <p className="text-slate-100 text-xs font-semibold leading-relaxed">
-                    &gt; {inspectedRecord.headline}
+                  <h4 className="text-slate-100 text-xs sm:text-sm font-bold leading-snug">
+                    {inspectedIntel.cleanTitle}
+                  </h4>
+                  <p className="text-slate-300 text-[11px] leading-relaxed pt-0.5">
+                    {inspectedIntel.summary}
                   </p>
                 </div>
 
-                {/* 3 Logos Metrics Mini-Bars */}
-                <div className="grid grid-cols-3 gap-2 text-[10px]">
-                  <div className="p-2 rounded bg-slate-900/50 border border-slate-800">
-                    <div className="flex justify-between text-slate-400 mb-1">
-                      <span>CARGA Ω</span>
-                      <strong className="text-rose-400">
-                        {inspectedRecord.metrics.omega_index.toFixed(3)}
-                      </strong>
-                    </div>
-                    <div className="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
-                      <div
-                        className="bg-rose-500 h-full transition-all duration-300"
-                        style={{
-                          width: `${Math.min(100, inspectedRecord.metrics.omega_index * 100)}%`,
-                        }}
-                      />
-                    </div>
+                {/* ACTIONABLE RECOMMENDATION (Prominently displayed) */}
+                <div
+                  className={`p-3.5 rounded-lg border-2 transition-all ${
+                    inspectedIntel.severityLabel === "CRÍTICO"
+                      ? "bg-rose-950/30 border-rose-500/80 shadow-[inset_0_0_15px_rgba(244,63,94,0.15)]"
+                      : "bg-cyan-950/30 border-cyan-500/70 shadow-[inset_0_0_15px_rgba(6,182,212,0.12)]"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider mb-1.5">
+                    <ShieldAlert
+                      className={`w-3.5 h-3.5 ${
+                        inspectedIntel.severityLabel === "CRÍTICO" ? "text-rose-400" : "text-cyan-400"
+                      }`}
+                    />
+                    <span
+                      className={
+                        inspectedIntel.severityLabel === "CRÍTICO"
+                          ? "text-rose-300 font-extrabold"
+                          : "text-cyan-300 font-extrabold"
+                      }
+                    >
+                      ACCIÓN OPERATIVA RECOMENDADA
+                    </span>
                   </div>
-
-                  <div className="p-2 rounded bg-slate-900/50 border border-slate-800">
-                    <div className="flex justify-between text-slate-400 mb-1">
-                      <span>FRICCIÓN</span>
-                      <strong className="text-cyan-400">
-                        {inspectedRecord.metrics.social_friction.toFixed(3)}
-                      </strong>
-                    </div>
-                    <div className="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
-                      <div
-                        className="bg-cyan-500 h-full transition-all duration-300"
-                        style={{
-                          width: `${Math.min(100, inspectedRecord.metrics.social_friction * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="p-2 rounded bg-slate-900/50 border border-slate-800">
-                    <div className="flex justify-between text-slate-400 mb-1">
-                      <span>INERCIA</span>
-                      <strong className="text-amber-400">
-                        {inspectedRecord.metrics.structural_inertia.toFixed(3)}
-                      </strong>
-                    </div>
-                    <div className="w-full bg-slate-800 h-1.5 rounded overflow-hidden">
-                      <div
-                        className="bg-amber-500 h-full transition-all duration-300"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            inspectedRecord.metrics.structural_inertia * 100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
+                  <p className="text-slate-100 text-xs font-semibold leading-relaxed">
+                    {inspectedIntel.recommendation}
+                  </p>
                 </div>
 
-                {/* Raw Forensic Telemetry Log Capture */}
-                <div className="rounded border border-cyan-900/60 bg-black p-2.5 space-y-2">
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
-                    <span className="text-[10px] font-bold text-cyan-400 flex items-center gap-1.5">
-                      <Terminal className="w-3.5 h-3.5" />
-                      EVIDENCIA TÉCNICA REAL (CAPTURA DE SENSOR)
+                {/* Key Context Grid (Asset & Official Source) */}
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div className="p-2.5 rounded bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
+                    <span className="text-slate-500 uppercase font-bold flex items-center gap-1">
+                      <Layers className="w-3 h-3 text-rose-400" />
+                      ACTIVO / SECTOR AFECTADO
                     </span>
-                    <button
-                      onClick={handleCopyForensic}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 text-[10px] border border-slate-700 cursor-pointer"
-                    >
-                      {copiedLog ? (
-                        <Check className="w-3 h-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3 h-3" />
-                      )}
-                      <span>{copiedLog ? "COPIADO" : "COPIAR"}</span>
-                    </button>
+                    <span className="text-slate-200 font-bold truncate mt-1">
+                      {inspectedIntel.affectedAsset}
+                    </span>
                   </div>
 
-                  <pre className="text-[10px] text-emerald-300/95 font-mono leading-relaxed overflow-x-auto whitespace-pre-wrap max-h-[115px] overflow-y-auto select-text">
-                    {inspectedRecord.evidence?.raw_evidence ||
-                      "No raw forensic capture available."}
-                  </pre>
-
-                  {/* Entities Chips */}
-                  {inspectedRecord.evidence?.entities &&
-                    inspectedRecord.evidence.entities.length > 0 && (
-                      <div className="pt-1 border-t border-slate-900 flex flex-wrap gap-1">
-                        {inspectedRecord.evidence.entities.map((ent, idx) => (
-                          <span
-                            key={idx}
-                            className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300 text-[9px]"
-                          >
-                            {ent}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                  {/* Clickable Official Source Verification Link */}
-                  {inspectedRecord.evidence?.source_url && (
-                    <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
-                      <span className="text-[9px] text-slate-400 truncate">
-                        Fuente: <strong className="text-cyan-300">{inspectedRecord.source}</strong>
-                      </span>
-                      {inspectedRecord.evidence.source_url.startsWith("http") ? (
+                  <div className="p-2.5 rounded bg-slate-900/60 border border-slate-800 flex flex-col justify-between">
+                    <span className="text-slate-500 uppercase font-bold flex items-center gap-1">
+                      <ExternalLink className="w-3 h-3 text-emerald-400" />
+                      VERIFICACIÓN EN FUENTE
+                    </span>
+                    <div className="mt-1">
+                      {inspectedRecord.evidence?.source_url?.startsWith("http") ? (
                         <a
                           href={inspectedRecord.evidence.source_url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/70 text-emerald-300 hover:text-white text-[10px] font-bold transition-colors"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-cyan-400 hover:text-cyan-300 underline"
                         >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>VERIFICAR FUENTE EN VIVO</span>
+                          Verificar reporte oficial ↗
                         </a>
                       ) : (
-                        <span className="text-[9px] text-slate-500 font-mono truncate">
-                          {inspectedRecord.evidence.source_url}
-                        </span>
+                        <span className="text-slate-400 font-bold">Oficial validada</span>
                       )}
                     </div>
-                  )}
+                  </div>
                 </div>
 
-                {/* Chronological Event Timeline */}
-                {inspectedRecord.evidence?.timeline &&
-                  inspectedRecord.evidence.timeline.length > 0 && (
-                    <div className="space-y-1 bg-slate-900/40 border border-slate-800/80 rounded p-2">
-                      <span className="text-[9px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-cyan-400" />
-                        CRONOLOGÍA FORENSE DEL INCIDENTE
-                      </span>
-                      <div className="space-y-1">
-                        {inspectedRecord.evidence.timeline.map((step, i) => (
-                          <div
-                            key={i}
-                            className="flex items-start gap-2 text-[10px] leading-tight"
-                          >
-                            <span className="text-cyan-400 font-bold shrink-0 w-16">
-                              {step.offset}
-                            </span>
-                            <span className="text-slate-300">{step.event}</span>
-                          </div>
-                        ))}
+                {/* Collapsible Technical Audit Trail (Hidden from clutter, available on demand) */}
+                <div className="border border-slate-800/90 rounded-lg overflow-hidden bg-black/60">
+                  <button
+                    onClick={() => setShowTechnicalLog(!showTechnicalLog)}
+                    className="w-full flex items-center justify-between px-3 py-2 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-slate-900/60 transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5 font-bold uppercase text-slate-300">
+                      <FileText className="w-3 h-3 text-cyan-400" />
+                      {showTechnicalLog ? "OCULTAR REGISTRO TÉCNICO" : "VER LOG TÉCNICO & REGISTRO FORENSE"}
+                    </span>
+                    {showTechnicalLog ? (
+                      <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                    )}
+                  </button>
+
+                  {showTechnicalLog && (
+                    <div className="p-3 border-t border-slate-800 space-y-2 text-[10px] bg-black">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500">CAPTURA DE TELEMETRÍA:</span>
+                        <button
+                          onClick={handleCopyForensic}
+                          className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300 text-[9px]"
+                        >
+                          {copiedLog ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5" />}
+                          <span>{copiedLog ? "COPIADO" : "COPIAR"}</span>
+                        </button>
+                      </div>
+                      <pre className="text-emerald-300/90 font-mono text-[9px] leading-relaxed overflow-x-auto whitespace-pre-wrap max-h-24 overflow-y-auto p-2 rounded bg-slate-950 border border-slate-900">
+                        {inspectedRecord.evidence?.raw_evidence || "Sin captura cruda."}
+                      </pre>
+                      <div className="text-[9px] text-slate-500 truncate">
+                        SHA-256: <code>{inspectedRecord.evidence?.sha256_fingerprint || "N/A"}</code>
                       </div>
                     </div>
                   )}
+                </div>
               </div>
 
               {/* Action Buttons Bar */}
               <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
                 <button
-                  onClick={() => handleExecuteMitigation("WU_WEI_SANDBOX_ISOLATION")}
+                  onClick={() => handleExecuteMitigation("OPERATIONAL_CONTAINMENT")}
                   disabled={mitigating}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-500/80 text-rose-200 hover:text-white font-bold text-[11px] transition-all cursor-pointer disabled:opacity-50"
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg font-bold text-xs transition-all cursor-pointer disabled:opacity-50 ${
+                    inspectedRecord.mitigated_by_soc
+                      ? "bg-emerald-950/70 border border-emerald-500 text-emerald-300"
+                      : "bg-rose-950/80 hover:bg-rose-900 border border-rose-500/80 text-rose-200 hover:text-white"
+                  }`}
                 >
-                  <Lock className="w-3.5 h-3.5 text-rose-400" />
+                  <Lock className="w-3.5 h-3.5" />
                   <span>
-                    {mitigating ? "AISLANDO NODO..." : "AISLAR NODO (PROTOCOLO WU-WEI)"}
+                    {inspectedRecord.mitigated_by_soc
+                      ? "AMENAZA CONTENIDA ✓"
+                      : mitigating
+                      ? "CONTENIENDO..."
+                      : "CONTENER AMENAZA / AISLAR"}
                   </span>
                 </button>
 
                 <button
                   onClick={handleDownloadForensic}
-                  className="flex items-center justify-center gap-1 px-2.5 py-2 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold text-[11px] transition-colors cursor-pointer"
+                  className="flex items-center justify-center gap-1 px-3 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 font-bold text-xs transition-colors cursor-pointer"
                   title="Descargar JSON Forense"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -1131,7 +1131,7 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
 
                 <button
                   onClick={() => onOpenFullModal(inspectedRecord)}
-                  className="flex items-center justify-center gap-1 px-2.5 py-2 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-600 text-cyan-200 font-bold text-[11px] transition-colors cursor-pointer"
+                  className="flex items-center justify-center gap-1 px-3 py-2.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-600 text-cyan-200 font-bold text-xs transition-colors cursor-pointer"
                   title="Abrir expediente completo"
                 >
                   <Maximize2 className="w-3.5 h-3.5" />
@@ -1141,21 +1141,21 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
             </>
           ) : (
             <div className="h-full flex items-center justify-center text-slate-500 italic py-12">
-              Selecciona un nodo en el mapa para inspeccionar su evidencia forense.
+              Selecciona un nodo en el mapa para inspeccionar su expediente operativo.
             </div>
           )}
         </div>
       </div>
 
-      {/* BOTTOM DIRECTORY: Stable Grid of All Global Surveillance Nodes (Never Re-orders on Tick!) */}
+      {/* BOTTOM DIRECTORY: Stable Grid of All Global Surveillance Nodes (With Decision Tags!) */}
       <div className="p-3 bg-slate-900/90 flex flex-col gap-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-slate-300 text-[10px] uppercase font-bold tracking-wider flex items-center gap-1.5">
             <Flame className="w-3.5 h-3.5 text-rose-400" />
-            DIRECTORIO GLOBAL DE SENSORES ({filteredNodes.length} INSTALACIONES ACTIVAS — ORDEN ESTABLE OESTE → ESTE):
+            DIRECTORIO GLOBAL DE SENSORES ({filteredNodes.length} NODOS ACTIVOS — FILTRO: {filterSeverity}):
           </span>
           <span className="text-cyan-400 text-[10px] font-bold">
-            HAZ CLIC EN CUALQUIER TARJETA PARA FIJAR OBJETIVO Y VER EVIDENCIA REAL
+            HAZ CLIC EN CUALQUIER TARJETA PARA FIJAR OBJETIVO Y VER MEDIDAS CORRECTIVAS
           </span>
         </div>
 
@@ -1164,20 +1164,21 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
             const facKey =
               item.geo?.facility || `${item.geo?.city}-${item.geo?.country}`;
             const isSelected = inspectedRecord?.geo?.facility === facKey;
-            const isRed = item.threat_level === "RED";
-            const isYellow = item.threat_level === "YELLOW";
+            const itemIntel = analyzeRecordForDecision(item);
+            const isCrit = itemIntel.severityLabel === "CRÍTICO";
+            const isObs = itemIntel.severityLabel === "OBSERVACIÓN";
 
             return (
               <button
                 key={facKey}
                 type="button"
                 onClick={() => handleSelectNode(item)}
-                className={`p-2 rounded border text-left flex flex-col justify-between transition-colors cursor-pointer ${
+                className={`p-2.5 rounded-lg border text-left flex flex-col justify-between transition-colors cursor-pointer ${
                   isSelected
-                    ? "bg-cyan-950/60 border-2 border-cyan-400 shadow-md shadow-cyan-950/50"
-                    : isRed
+                    ? "bg-cyan-950/70 border-2 border-cyan-400 shadow-md shadow-cyan-950/60"
+                    : isCrit
                     ? "bg-rose-950/35 hover:bg-rose-950/60 border-rose-600/70 text-rose-200"
-                    : isYellow
+                    : isObs
                     ? "bg-amber-950/30 hover:bg-amber-950/50 border-amber-600/60 text-amber-200"
                     : "bg-slate-950/70 hover:bg-slate-900 border-slate-800 text-slate-300"
                 }`}
@@ -1188,19 +1189,19 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
                   </span>
                   <span
                     className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold border shrink-0 ${
-                      isRed
-                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                        : isYellow
-                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                        : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                      isCrit
+                        ? "bg-rose-500/20 text-rose-300 border-rose-500/50"
+                        : isObs
+                        ? "bg-amber-500/20 text-amber-300 border-amber-500/50"
+                        : "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
                     }`}
                   >
-                    Ω {item.metrics.omega_index.toFixed(3)}
+                    {itemIntel.shortTag}
                   </span>
                 </div>
 
-                <div className="text-[10px] text-slate-400 truncate mb-1">
-                  {item.geo?.facility}
+                <div className="text-[10px] text-slate-300 font-medium truncate mb-1">
+                  {itemIntel.cleanTitle}
                 </div>
 
                 <div className="flex items-center justify-between text-[9px] pt-1 border-t border-slate-800/80">
@@ -1208,7 +1209,7 @@ export const GlobalThreatMap: React.FC<GlobalThreatMapProps> = ({
                     {item.geo?.country}
                   </span>
                   <span className="text-cyan-400 font-bold shrink-0">
-                    {isSelected ? "● ACTIVO" : "INSPECCIONAR →"}
+                    {isSelected ? "● SELECCIONADO" : "EVALUAR →"}
                   </span>
                 </div>
               </button>
