@@ -1,4 +1,4 @@
-name: Syntergic EWS Cloud Sentinel, Telegram & GitHub Pages Deploy
+name: Syntergic Cloud Sentinel (OSINT + Telegram EWS)
 
 on:
   push:
@@ -6,25 +6,24 @@ on:
       - main
   schedule:
     # Vigilancia continua cada 30 min para Zero-Days (CVSS >= 9.0) y emergencias críticas
-    - cron: '30 * * * *'
-    - cron: '0 0-10,12-23 * * *'
+    - cron: '*/30 * * * *'
     # Reporte Diario Global a las 08:00 AM Hora Argentina (11:00 UTC)
     - cron: '0 11 * * *'
   workflow_dispatch:
     inputs:
       target_job:
-        description: 'Select which Syntergic Cloud job to trigger manually'
+        description: 'Seleccionar reporte a enviar a Telegram'
         required: true
         default: 'both'
         type: choice
         options:
+          - both
           - sentinel
           - digest
-          - both
       force_notify:
-        description: 'Ignore deduplication cache and force alert for all current RED spikes'
+        description: 'Forzar envío inmediato a Telegram ignorando caché'
         required: false
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -34,7 +33,7 @@ permissions:
 
 concurrency:
   group: syntergic-ews-pages-${{ github.workflow }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -44,7 +43,7 @@ env:
 
 jobs:
   sentinel:
-    name: Job 1 - 7-Front OSINT Sentinel & Snapshot Generator
+    name: Job 1 - 7-Front OSINT Sentinel & Telegram Dispatcher
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -71,12 +70,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Execute 7-Front Sentinel & Export Live Snapshot for GitHub Pages
+      - name: Execute 7-Front Sentinel & Dispatch to Telegram
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            python backend/cloud_sentinel.py --mode export-only
-          elif [ "${{ github.event.inputs.force_notify }}" = "true" ]; then
-            python backend/cloud_sentinel.py --mode sentinel --force-notify
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ github.event.inputs.target_job }}"
+            if [ -z "$MODE" ]; then MODE="both"; fi
+            python backend/cloud_sentinel.py --mode "$MODE" --force-notify
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            python backend/cloud_sentinel.py --mode both --force-notify
           else
             python backend/cloud_sentinel.py --mode sentinel
           fi
@@ -89,16 +90,14 @@ jobs:
           if-no-files-found: warn
 
   digest:
-    name: Job 2 - Daily 7-Front Global Entropy Panorama Digest
+    name: Job 2 - Daily 08:00 ART Global Panorama Digest
     needs: [sentinel]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: >-
       always() &&
       (needs.sentinel.result == 'success' || needs.sentinel.result == 'skipped') &&
-      ((github.event_name == 'schedule' && github.event.schedule == '0 11 * * *') ||
-       (github.event_name == 'workflow_dispatch' &&
-        (github.event.inputs.target_job == 'digest' || github.event.inputs.target_job == 'both')))
+      (github.event_name == 'schedule' && github.event.schedule == '0 11 * * *')
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -115,7 +114,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Execute 7-Front Global Panorama Digest Delivery
+      - name: Execute Daily 08:00 ART Panorama Digest Delivery
         run: python backend/cloud_sentinel.py --mode digest
 
   deploy_pages:
@@ -145,7 +144,9 @@ jobs:
           cache-dependency-path: 'frontend/package-lock.json'
 
       - name: Configure GitHub Pages
+        id: pages_config
         uses: actions/configure-pages@v5
+        continue-on-error: true
 
       - name: Install Frontend Dependencies & Build Static Export
         working-directory: frontend
@@ -157,10 +158,12 @@ jobs:
           touch out/.nojekyll
 
       - name: Upload GitHub Pages Artifact
+        if: steps.pages_config.outcome == 'success'
         uses: actions/upload-pages-artifact@v3
         with:
           path: frontend/out
 
       - name: Deploy to GitHub Pages
+        if: steps.pages_config.outcome == 'success'
         id: deployment
         uses: actions/deploy-pages@v4
