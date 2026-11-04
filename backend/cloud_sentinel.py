@@ -75,27 +75,76 @@ def save_seen_hashes(hashes: Set[str]) -> None:
         logger.warning("Failed to write sentinel cache (%s): %s", CACHE_FILE, exc)
 
 
+def is_immediate_emergency(ev: Dict[str, Any]) -> Tuple[bool, int]:
+    """Determines if an event requires an immediate Telegram alert and returns (should_alert, priority_rank).
+
+    Priority 3 (Highest):
+      - Zero-Day actively exploited (CISA KEV or 0-day advisory)
+      - Any vulnerability with CVSS >= 9.0
+    Priority 2 (High):
+      - Critical Cloud Infrastructure Outage (Cloudflare / GitHub major/critical)
+      - Earthquake M >= 6.0 or Tsunami warning (USGS) or UN GDACS RED disaster alert
+      - Severe Solar / Geomagnetic Storm (NOAA SWPC K>=6, X-flare, radio blackout)
+    Priority 1 (Standard Critical):
+      - Active Ransomware breach or online Botnet C2 server
+      - Major armed escalation / missile strike / nuclear / coup
+      - WHO epidemic / pandemic emergency or systemic financial shock
+    """
+    ev_data = ev.get("evidence", {})
+    cvss = ev_data.get("cvss_score")
+    is_zd = bool(ev_data.get("is_zero_day"))
+    ev_type = str(ev_data.get("event_type", "")).upper()
+    front = str(ev_data.get("strategic_front", "CYBER_WARFARE")).upper()
+    source = str(ev.get("source", "")).upper()
+    headline = str(ev.get("headline", "")).lower()
+    sev = str(ev.get("severity", "NORMAL")).upper()
+
+    # 1. Zero-Day or CVSS >= 9.0 -> ALWAYS immediate highest priority
+    if (cvss is not None and float(cvss) >= 9.0) or is_zd or ev_type == "ACTIVELY_EXPLOITED_ZERO_DAY_CVE":
+        return True, 3
+
+    # Must be at least CRITICAL (or omega > 0.70) for other immediate triggers
+    sf = float(ev.get("base_friction", 0.3))
+    si = float(ev.get("base_inertia", 0.3))
+    omega = round(0.5 * sf + 0.5 * si, 3)
+    if sev != "CRITICAL" and omega <= 0.70:
+        return False, 0
+
+    # 2. Cloud Backbone, Major Seismic (M>=6.0), UN RED Disaster, or Severe Space Weather
+    if front in ("INFRASTRUCTURE_CLOUD", "SPACE_WEATHER_GRID"):
+        return True, 2
+    if front == "GEOPHYSICAL_CLIMATE":
+        if "GDACS" in source and "RED" in source:
+            return True, 2
+        if "USGS" in source:
+            m_match = headline.find("m6.") != -1 or headline.find("m7.") != -1 or headline.find("m8.") != -1 or "tsunami" in headline
+            return (True, 2) if m_match else (True, 1)
+        return True, 1
+
+    # 3. Cyber (Ransomware / C2), Geopolitical, Bio-Humanitarian, Financial criticals
+    return True, 1
+
+
 def evaluate_global_state(events: List[Dict[str, Any]]) -> Tuple[float, str, List[Dict[str, Any]]]:
-    """Computes global moving average Omega, Threat Level, and filters CRITICAL (RED) events."""
+    """Computes global moving average Omega, Threat Level, and filters immediate CRITICAL events."""
     if not events:
         return 0.25, "GREEN", []
 
     omegas: List[float] = []
-    critical_events: List[Dict[str, Any]] = []
+    critical_with_rank: List[Tuple[int, float, Dict[str, Any]]] = []
 
     for ev in events:
         sf = float(ev.get("base_friction", 0.3))
         si = float(ev.get("base_inertia", 0.3))
         omega = round(0.5 * sf + 0.5 * si, 3)
         omegas.append(omega)
-        if omega > 0.70 or ev.get("severity") == "CRITICAL":
-            critical_events.append(ev)
+        should_alert, rank = is_immediate_emergency(ev)
+        if should_alert:
+            critical_with_rank.append((rank, omega, ev))
 
-    # Sort critical events by highest entropy first
-    critical_events.sort(
-        key=lambda x: 0.5 * float(x.get("base_friction", 0)) + 0.5 * float(x.get("base_inertia", 0)),
-        reverse=True,
-    )
+    # Sort by priority_rank (Zero-Day / CVSS>=9 first) and then by severity
+    critical_with_rank.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    critical_events = [item[2] for item in critical_with_rank]
 
     # Top-10 moving average window (matching Stage 3 Dispatcher)
     top_window = omegas[:10] if len(omegas) >= 10 else omegas

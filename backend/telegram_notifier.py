@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Telegram Bot API Notifier for Syntergic Telemetry EWS.
 
-Handles credential loading from environment or local .env files, message chunking
-under Telegram's 4096-character limit, Markdown/plain-text fallback, and
-structured formatting for Emergency RED Spikes and 7-Front Global Digests.
+Formats clean, high-signal executive intelligence reports in Spanish (Argentina UTC-3)
+without mathematical jargon (no Omega/SF/SI clutter), prioritizing actionable context,
+CVSS >= 9.0 / Zero-Day identification, official verifiable links, and direct access
+to the live GitHub Pages Dashboard.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 from pathlib import Path
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,15 +23,34 @@ import requests
 logger = logging.getLogger("syntergic.telegram")
 
 TELEGRAM_MAX_LEN = 3900
+ARGENTINA_TZ = timezone(timedelta(hours=-3))
+DASHBOARD_URL = os.getenv(
+    "SYNTERGIC_DASHBOARD_URL",
+    "https://phobetor-ops.github.io/Syntergic-Telemetry-Dashboard/",
+)
 
 FRONT_LABELS_ES: Dict[str, str] = {
-    "CYBER_WARFARE": "🛡️ Ciberdefensa, Ransomware & C2",
-    "INFRASTRUCTURE_CLOUD": "☁️ Infraestructura Cloud & BGP",
-    "GEOPOLITICAL_CONFLICT": "🌐 Geopolítica & Conflictos",
-    "GEOPHYSICAL_CLIMATE": "🌋 Geofísica, Sismos & Clima ONU",
+    "CYBER_WARFARE": "🛡️ Ciberseguridad, Zero-Days & Ransomware",
+    "INFRASTRUCTURE_CLOUD": "☁️ Infraestructura Cloud & Redes Globales",
+    "GEOPOLITICAL_CONFLICT": "🌐 Geopolítica & Seguridad Internacional",
+    "GEOPHYSICAL_CLIMATE": "🌋 Sismos, Volcanes & Clima Extremo",
     "SPACE_WEATHER_GRID": "☀️ Clima Espacial & Red Eléctrica",
-    "FINANCIAL_MACRO": "📉 Mercados Financieros & Energía",
-    "BIO_HUMANITARIAN": "🧬 Bioseguridad & Alertas OMS",
+    "FINANCIAL_MACRO": "📉 Mercados Financieros & Economía",
+    "BIO_HUMANITARIAN": "🧬 Salud Global & Alertas OMS",
+}
+
+SOURCE_CLEAN_NAMES: Dict[str, str] = {
+    "CISA_KEV_OFFICIAL_FEED": "Catálogo CISA KEV (EE. UU.)",
+    "THE_HACKER_NEWS_OSINT": "The Hacker News",
+    "SANS_ISC_STORM_CENTER": "SANS Internet Storm Center",
+    "CLOUDFLARE_EDGE_STATUS": "Cloudflare Global Status",
+    "GITHUB_CLOUD_STATUS": "GitHub Cloud Status",
+    "BBC_WORLD_OSINT": "BBC World News",
+    "BBC_MUNDO_LATAM_OSINT": "BBC Mundo (América Latina)",
+    "AL_JAZEERA_GLOBAL_OSINT": "Al Jazeera Internacional",
+    "UN_SECURITY_DISPATCH": "Naciones Unidas (ONU)",
+    "CNBC_GLOBAL_MACRO": "CNBC Economía & Mercados",
+    "WHO_EPIDEMIOLOGICAL_OSINT": "Organización Mundial de la Salud (OMS)",
 }
 
 
@@ -121,7 +142,6 @@ def send_telegram_message(
                 }
                 resp = requests.post(api_url, json=payload, timeout=12)
                 if resp.status_code == 400:
-                    # Fallback to plain text if HTML tags are unbalanced
                     payload.pop("parse_mode", None)
                     resp = requests.post(api_url, json=payload, timeout=12)
 
@@ -163,116 +183,211 @@ def _escape_html(text: str) -> str:
     )
 
 
+def _clean_headline(headline: str) -> str:
+    """Strips internal bracket prefixes like [RANSOMWARE BREACH // GROUP] for cleaner human reading."""
+    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", str(headline or "")).strip()
+    return cleaned or str(headline or "Evento Crítico")
+
+
+def _human_source_name(raw_source: str) -> str:
+    raw = str(raw_source or "OSINT").strip()
+    if raw in SOURCE_CLEAN_NAMES:
+        return SOURCE_CLEAN_NAMES[raw]
+    if raw.startswith("RANSOMWARE_LIVE"):
+        return raw.replace("RANSOMWARE_LIVE", "Ransomware.live")
+    if raw.startswith("ABUSE_CH_FEODO"):
+        return raw.replace("ABUSE_CH_FEODO", "abuse.ch Botnet Radar")
+    if raw.startswith("GDACS_UN_ALERT"):
+        return "Alerta Satelital GDACS (ONU / UE)"
+    if raw.startswith("USGS_NEIC_LIVE"):
+        return "Servicio Geológico de EE. UU. (USGS)"
+    if raw.startswith("NASA_EONET_SATELLITE"):
+        return "NASA Earth Observatory (EONET)"
+    if raw.startswith("NOAA_SWPC_SPACE"):
+        return "Centro de Clima Espacial NOAA"
+    return raw
+
+
+def _classify_alert_reason(ev: Dict[str, Any]) -> str:
+    """Returns a concise, human-readable reason why this event is critical."""
+    ev_data = ev.get("evidence", {})
+    event_type = str(ev_data.get("event_type", "")).upper()
+    front = str(ev_data.get("strategic_front", "CYBER_WARFARE")).upper()
+    cvss = ev_data.get("cvss_score")
+    is_zero_day = bool(ev_data.get("is_zero_day"))
+    headline_lower = str(ev.get("headline", "")).lower()
+    content_lower = str(ev.get("content", "")).lower()
+
+    if cvss is not None and float(cvss) >= 9.0:
+        if is_zero_day or "cisa" in headline_lower or "zero-day" in headline_lower or "0-day" in headline_lower:
+            return f"🚨 ZERO-DAY CRÍTICO (Severidad CVSS {float(cvss):.1f}/10)"
+        return f"🛡️ VULNERABILIDAD CRÍTICA (Severidad CVSS {float(cvss):.1f}/10)"
+
+    if event_type == "ACTIVELY_EXPLOITED_ZERO_DAY_CVE" or is_zero_day or "zero-day" in headline_lower or "0-day" in headline_lower:
+        return "🚨 ZERO-DAY EN EXPLOTACIÓN ACTIVA"
+
+    if event_type == "ACTIVE_RANSOMWARE_EXTORTION" or "ransomware" in headline_lower:
+        return "💀 ATAQUE DE RANSOMWARE CONFIRMADO"
+
+    if event_type == "ACTIVE_BOTNET_C2_INFRASTRUCTURE":
+        return "🤖 SERVIDOR BOTNET C2 ACTIVO"
+
+    if front == "INFRASTRUCTURE_CLOUD":
+        return "☁️ INCIDENTE EN INFRAESTRUCTURA CLOUD GLOBAL"
+
+    if front == "GEOPHYSICAL_CLIMATE":
+        if "seismic" in headline_lower or "usgs" in str(ev.get("source", "")).lower():
+            return "🌋 SISMO DE IMPORTANCIA DETECTADO"
+        if "gdacs" in str(ev.get("source", "")).lower():
+            return "🌪️ ALERTA ROJA DE DESASTRE NATURAL (ONU)"
+        return "🌋 FENÓMENO GEOFÍSICO / CLIMÁTICO SEVERO"
+
+    if front == "SPACE_WEATHER_GRID":
+        return "☀️ ALERTA DE TORMENTA SOLAR / GEOMAGNÉTICA"
+
+    if front == "BIO_HUMANITARIAN":
+        return "🧬 ALERTA SANITARIA INTERNACIONAL (OMS)"
+
+    if front == "FINANCIAL_MACRO":
+        return "📉 ALERTA DE IMPACTO FINANCIERO / MERCADOS"
+
+    if any(k in headline_lower or k in content_lower for k in ["missile", "airstrike", "nuclear", "invasion", "coup", "war", "guerra", "misil"]):
+        return "🌐 ESCALADA BÉLICA / SEGURIDAD INTERNACIONAL"
+
+    return "🌐 INCIDENTE GEOPOLÍTICO RELEVANTE"
+
+
 def format_emergency_spike_alert(
     critical_events: List[Dict[str, Any]],
-    global_omega: float,
-    threat_level: str,
-    total_scanned: int,
+    global_omega: float = 0.0,
+    threat_level: str = "RED",
+    total_scanned: int = 0,
 ) -> str:
-    """Formats an immediate Emergency Alert for new RED spikes across the 7 Strategic Fronts."""
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    status_emoji = "🔴" if threat_level == "RED" else "🟡" if threat_level == "YELLOW" else "🟢"
+    """Formats a clean, high-value Immediate Alert for critical incidents (Zero-Days CVSS>=9, major disasters, etc.)."""
+    now_arg = datetime.now(ARGENTINA_TZ).strftime("%d/%m/%Y %H:%M hs (Hora Argentina)")
 
     lines: List[str] = [
-        f"🚨 <b>SYNTERGIC EWS // ALERTA DE PICOS CRÍTICOS ({status_emoji} {threat_level})</b>",
-        f"🕒 <code>{now_utc}</code> | <b>Ω Global:</b> <code>{global_omega:.3f}</code> | <b>Nodos Escaneados:</b> <code>{total_scanned}</code>",
+        "🚨 <b>ALERTA INMEDIATA DE INTELIGENCIA</b>",
+        f"🕒 {now_arg}",
         "━━━━━━━━━━━━━━━━━━━━━━",
-        f"⚡ <b>Se detectaron {len(critical_events)} nuevos incidentes críticos (Ω &gt; 0.70):</b>\n",
+        f"Se detectaron <b>{len(critical_events)} incidente(s) prioritario(s)</b> en tiempo real:\n",
     ]
 
-    for idx, ev in enumerate(critical_events[:10], start=1):
-        sf = float(ev.get("base_friction", ev.get("metrics", {}).get("social_friction", 0.8)))
-        si = float(ev.get("base_inertia", ev.get("metrics", {}).get("structural_inertia", 0.8)))
-        omega = round(0.5 * sf + 0.5 * si, 3)
+    for idx, ev in enumerate(critical_events[:8], start=1):
         geo = ev.get("geo", {})
         ev_data = ev.get("evidence", {})
-        front_key = ev_data.get("strategic_front", "CYBER_WARFARE")
-        front_label = FRONT_LABELS_ES.get(front_key, front_key)
-        city = _escape_html(geo.get("city", "Global"))
-        country = _escape_html(geo.get("country", "World"))
-        lat = geo.get("lat", 0.0)
-        lng = geo.get("lng", 0.0)
-        headline = _escape_html(ev.get("headline", "Critical Anomaly"))
-        source = _escape_html(ev.get("source", "OSINT"))
-        protocol = _escape_html(ev_data.get("protocol", "TELEMETRY"))
-        url = ev_data.get("source_url", "")
+        reason_badge = _classify_alert_reason(ev)
+        title = _escape_html(_clean_headline(ev.get("headline", "Incidente Crítico")))
+        content = _escape_html(str(ev.get("content", "")).strip())
+        if len(content) > 220:
+            content = content[:217].rsplit(" ", 1)[0] + "..."
 
-        lines.append(
-            f"<b>{idx}. [{_escape_html(front_label)}]</b>\n"
-            f"🔥 <b>Ω={omega:.3f}</b> (SF:{sf:.2f} | SI:{si:.2f}) — <code>{source}</code>\n"
-            f"📌 <b>{headline}</b>\n"
-            f"📍 {city}, {country} (<code>{lat:.2f}, {lng:.2f}</code>)\n"
-            f"⚙️ Protocolo: <code>{protocol}</code>\n"
-            + (f"🔗 <a href=\"{url}\">Verificar Fuente Oficial</a>\n" if str(url).startswith("http") else "")
-        )
+        city = _escape_html(geo.get("city", ""))
+        country = _escape_html(geo.get("country", "Global"))
+        location_str = f"{city}, {country}" if city and city.lower() not in country.lower() else country
+        source_name = _escape_html(_human_source_name(ev.get("source", "OSINT")))
+        url = str(ev_data.get("source_url", "")).strip()
+
+        block = [
+            f"<b>{idx}. {_escape_html(reason_badge)}</b>",
+            f"📌 <b>{title}</b>",
+        ]
+        if content and content.lower() != title.lower():
+            block.append(f"📝 {content}")
+        block.append(f"📍 {location_str}  |  📡 Fuente: <i>{source_name}</i>")
+        if url.startswith("http"):
+            block.append(f"🔗 <a href=\"{url}\">Ver reporte oficial</a>")
+        lines.append("\n".join(block) + "\n")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("🛡️ <i>Directiva: WU-WEI SANDBOX ISOLATION // Monitoreo Automático Cloud</i>")
+    lines.append(f"🌐 <b><a href=\"{DASHBOARD_URL}\">Abrir Mapa Interactivo en Vivo (GitHub Pages)</a></b>")
     return "\n".join(lines)
 
 
 def format_global_panorama_digest(
     all_events: List[Dict[str, Any]],
-    global_omega: float,
-    threat_level: str,
+    global_omega: float = 0.0,
+    threat_level: str = "YELLOW",
 ) -> str:
-    """Formats a comprehensive 7-Front Global Entropy Panorama Digest for Telegram."""
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    status_emoji = "🔴" if threat_level == "RED" else "🟡" if threat_level == "YELLOW" else "🟢"
+    """Formats the daily 08:00 AM (Argentina) Global Panorama Report without technical/math clutter."""
+    now_arg = datetime.now(ARGENTINA_TZ).strftime("%d/%m/%Y %H:%M hs (Hora Argentina)")
 
-    front_counts: Counter = Counter()
-    front_max_omega: Dict[str, float] = {}
-    red_events: List[Tuple[float, Dict[str, Any]]] = []
-    yellow_count = 0
-    green_count = 0
+    front_total: Counter = Counter()
+    front_critical: Counter = Counter()
+    critical_list: List[Dict[str, Any]] = []
+    elevated_count = 0
 
     for ev in all_events:
-        sf = float(ev.get("base_friction", ev.get("metrics", {}).get("social_friction", 0.3)))
-        si = float(ev.get("base_inertia", ev.get("metrics", {}).get("structural_inertia", 0.3)))
-        omega = round(0.5 * sf + 0.5 * si, 3)
         front = ev.get("evidence", {}).get("strategic_front", "CYBER_WARFARE")
-        front_counts[front] += 1
-        front_max_omega[front] = max(front_max_omega.get(front, 0.0), omega)
+        front_total[front] += 1
+        sev = str(ev.get("severity", "NORMAL")).upper()
+        cvss = ev.get("evidence", {}).get("cvss_score")
+        is_crit = sev == "CRITICAL" or (cvss is not None and float(cvss) >= 9.0)
 
-        if omega > 0.70 or ev.get("severity") == "CRITICAL":
-            red_events.append((omega, ev))
-        elif omega >= 0.40 or ev.get("severity") == "ELEVATED":
-            yellow_count += 1
-        else:
-            green_count += 1
+        if is_crit:
+            front_critical[front] += 1
+            critical_list.append(ev)
+        elif sev == "ELEVATED":
+            elevated_count += 1
 
-    red_events.sort(key=lambda x: x[0], reverse=True)
+    # Prioritize Zero-Days / CVSS>=9 first, then Cloud/Geophysical/Cyber criticals
+    def _sort_key(item: Dict[str, Any]) -> Tuple[int, float]:
+        ev_d = item.get("evidence", {})
+        cvss_val = float(ev_d.get("cvss_score") or 0.0)
+        is_zd = 1 if (cvss_val >= 9.0 or ev_d.get("is_zero_day")) else 0
+        sf = float(item.get("base_friction", 0.5))
+        si = float(item.get("base_inertia", 0.5))
+        return (is_zd, sf + si)
+
+    critical_list.sort(key=_sort_key, reverse=True)
 
     lines: List[str] = [
-        f"🌐 <b>SYNTERGIC EWS // PANORAMA GLOBAL EN 7 FRENTES ({status_emoji} {threat_level})</b>",
-        f"🕒 <code>{now_utc}</code> | <b>Promedio Móvil Ω:</b> <code>{global_omega:.3f}</code>",
-        f"📊 <b>Total Nodos Activos:</b> <code>{len(all_events)}</code> (🔴 <b>{len(red_events)} Críticos</b> | 🟡 <b>{yellow_count} Elevados</b> | 🟢 <b>{green_count} Estables</b>)",
+        "☀️ <b>REPORTE DIARIO DE INTELIGENCIA GLOBAL</b>",
+        f"🕒 {now_arg}",
+        f"📊 <b>Eventos Activos Monitoreados:</b> {len(all_events)} "
+        f"(🔴 <b>{len(critical_list)} Críticos</b> | 🟡 <b>{elevated_count} En Observación</b>)",
         "━━━━━━━━━━━━━━━━━━━━━━",
-        "🧭 <b>ESTADO POR FRENTE ESTRATÉGICO:</b>",
+        "🧭 <b>RESUMEN POR FRENTE ESTRATÉGICO:</b>",
     ]
 
     for front_key, label in FRONT_LABELS_ES.items():
-        cnt = front_counts.get(front_key, 0)
-        peak = front_max_omega.get(front_key, 0.0)
-        f_icon = "🔴" if peak > 0.70 else "🟡" if peak >= 0.40 else "🟢"
-        lines.append(f"• {f_icon} <b>{label}:</b> <code>{cnt} nodos</code> (Pico Ω: <code>{peak:.3f}</code>)")
+        total_f = front_total.get(front_key, 0)
+        crit_f = front_critical.get(front_key, 0)
+        icon = "🔴" if crit_f > 0 else "🟢" if total_f > 0 else "⚪"
+        if crit_f > 0:
+            lines.append(f"• {icon} <b>{label}:</b> {crit_f} crítico(s) <i>({total_f} en total)</i>")
+        else:
+            lines.append(f"• {icon} <b>{label}:</b> Sin alertas críticas <i>({total_f} en seguimiento)</i>")
 
     lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("🔥 <b>TOP 6 FOCOS DE MAYOR ENTROPÍA ACTUAL:</b>\n")
+    lines.append("🔥 <b>EVENTOS MÁS RELEVANTES DE LAS ÚLTIMAS 24 HORAS:</b>\n")
 
-    for idx, (omega, ev) in enumerate(red_events[:6], start=1):
+    for idx, ev in enumerate(critical_list[:7], start=1):
         geo = ev.get("geo", {})
         ev_data = ev.get("evidence", {})
-        headline = _escape_html(ev.get("headline", ""))
+        badge = _classify_alert_reason(ev)
+        title = _escape_html(_clean_headline(ev.get("headline", "")))
+        content = _escape_html(str(ev.get("content", "")).strip())
+        if len(content) > 170:
+            content = content[:167].rsplit(" ", 1)[0] + "..."
+
         city = _escape_html(geo.get("city", ""))
-        country = _escape_html(geo.get("country", ""))
-        url = ev_data.get("source_url", "")
-        lines.append(
-            f"<b>{idx}. Ω={omega:.3f}</b> | 📍 {city}, {country}\n"
-            f"   {_escape_html(ev.get('source', 'OSINT'))}: <b>{headline}</b>\n"
-            + (f"   🔗 <a href=\"{url}\">Fuente Oficial Verificable</a>\n" if str(url).startswith("http") else "")
-        )
+        country = _escape_html(geo.get("country", "Global"))
+        location_str = f"{city}, {country}" if city and city.lower() not in country.lower() else country
+        source_name = _escape_html(_human_source_name(ev.get("source", "OSINT")))
+        url = str(ev_data.get("source_url", "")).strip()
+
+        item_lines = [
+            f"<b>{idx}. {_escape_html(badge)}</b>",
+            f"   <b>{title}</b>",
+        ]
+        if content and content.lower() != title.lower():
+            item_lines.append(f"   <i>{content}</i>")
+        item_lines.append(f"   📍 {location_str} — {source_name}")
+        if url.startswith("http"):
+            item_lines.append(f"   🔗 <a href=\"{url}\">Fuente oficial</a>")
+        lines.append("\n".join(item_lines) + "\n")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("🤖 <i>Syntergic Autonomous Cloud Sentinel (GitHub Actions)</i>")
+    lines.append(f"🌐 <b><a href=\"{DASHBOARD_URL}\">Ver Dashboard y Mapa Interactivo en Vivo (GitHub Pages)</a></b>")
     return "\n".join(lines)

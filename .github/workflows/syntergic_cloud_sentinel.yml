@@ -5,10 +5,11 @@ on:
     branches:
       - main
   schedule:
-    # Job 1 (Sentinel Recon, Snapshot Update & Emergency Spikes): Every 4 hours
-    - cron: '0 */4 * * *'
-    # Job 2 (7-Front Global Panorama Digest): Daily at 10:00 UTC
-    - cron: '0 10 * * *'
+    # Vigilancia continua cada 30 min para Zero-Days (CVSS >= 9.0) y emergencias críticas
+    - cron: '30 * * * *'
+    - cron: '0 0-10,12-23 * * *'
+    # Reporte Diario Global a las 08:00 AM Hora Argentina (11:00 UTC)
+    - cron: '0 11 * * *'
   workflow_dispatch:
     inputs:
       target_job:
@@ -95,7 +96,7 @@ jobs:
     if: >-
       always() &&
       (needs.sentinel.result == 'success' || needs.sentinel.result == 'skipped') &&
-      ((github.event_name == 'schedule' && github.event.schedule == '0 10 * * *') ||
+      ((github.event_name == 'schedule' && github.event.schedule == '0 11 * * *') ||
        (github.event_name == 'workflow_dispatch' &&
         (github.event.inputs.target_job == 'digest' || github.event.inputs.target_job == 'both')))
     steps:

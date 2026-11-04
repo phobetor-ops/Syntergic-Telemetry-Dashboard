@@ -237,14 +237,69 @@ def _infer_country_from_place(place: str, lat: float, lng: float) -> Tuple[str, 
     return (place[:38], country, code)
 
 
+def _extract_cvss_score(text: str) -> Optional[float]:
+    """Extracts explicit CVSS score (e.g., 'CVSS 9.8', 'CVSS v3.1: 10.0', 'score of 9.6') from text."""
+    if not text:
+        return None
+    patterns = [
+        r"cvss(?:\s*v?[34](?:\.\d)?)?(?:\s*base)?(?:\s*score|\s*rating)?\s*(?:of|:|=|-|\s)\s*(10\.0|[0-9]\.\d)",
+        r"(?:severity|score)\s*(?:of|:|=)\s*(10\.0|9\.\d)\b",
+    ]
+    lower = text.lower()
+    for pat in patterns:
+        m = re.search(pat, lower)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                pass
+    return None
+
+
+def _fetch_cve_cvss_from_mitre(cve_id: str) -> Optional[float]:
+    """Queries official CVE.org / MITRE AWG API for exact CVSS baseScore of a CVE (fast, unauthenticated)."""
+    if not cve_id or not cve_id.upper().startswith("CVE-"):
+        return None
+    try:
+        url = f"https://cveawg.mitre.org/api/cve/{cve_id.upper()}"
+        resp = requests.get(url, timeout=3.5)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        containers = data.get("containers", {})
+        cna_metrics = containers.get("cna", {}).get("metrics", [])
+        adp_list = containers.get("adp", [])
+        all_metrics = list(cna_metrics)
+        for adp in adp_list:
+            all_metrics.extend(adp.get("metrics", []))
+        best_score: Optional[float] = None
+        for m in all_metrics:
+            for key in ("cvssV4_0", "cvssV3_1", "cvssV3_0", "cvssV2_0"):
+                if key in m and isinstance(m[key], dict):
+                    sc = m[key].get("baseScore")
+                    if sc is not None:
+                        val = float(sc)
+                        if best_score is None or val > best_score:
+                            best_score = val
+        return best_score
+    except Exception:
+        return None
+
+
 def _score_text_entropy(text: str) -> Tuple[float, float, str]:
     lower = text.lower()
+    cvss = _extract_cvss_score(text)
+    has_zero_day = any(k in lower for k in ["zero-day", "0-day", "zero day", "actively exploited"])
+
+    if (cvss is not None and cvss >= 9.0) or has_zero_day:
+        return (0.92, 0.90, "CRITICAL")
+
     critical_terms = [
         "zero-day", "actively exploited", "ransomware", "rce", "remote code execution",
         "breach", "attack", "war", "missile", "strike", "killed", "explosion", "earthquake",
         "tsunami", "cyclone", "hurricane", "eruption", "critical", "emergency", "hijack",
         "outage", "blackout", "sanctions", "nuclear", "conflict", "crisis", "guerra",
-        "ataque", "muertos", "emergencia", "epidemic", "outbreak", "crash", "default"
+        "ataque", "muertos", "emergencia", "epidemic", "outbreak", "crash", "default", "coup"
     ]
     elevated_terms = [
         "vulnerability", "cve-", "patch", "flaw", "malware", "phishing", "botnet",
@@ -417,12 +472,16 @@ def fetch_cisa_kev_live_events(limit: int = 6) -> List[Dict[str, Any]]:
             nvd_url = f"https://nvd.nist.gov/vuln/detail/{cve_id}"
             geo = resolve_geolocation_from_text(f"{vendor} {product} {vuln_name}", unique_suffix=cve_id)
 
+            cvss_score = _fetch_cve_cvss_from_mitre(cve_id) or _extract_cvss_score(short_desc)
             is_ransomware = ransomware.lower() == "known"
-            sf = 0.88 if is_ransomware else 0.76
-            si = 0.86 if is_ransomware else 0.74
+            is_cvss_9_plus = cvss_score is not None and cvss_score >= 9.0
+
+            sf = 0.92 if (is_ransomware or is_cvss_9_plus) else 0.82
+            si = 0.90 if (is_ransomware or is_cvss_9_plus) else 0.80
+            cvss_tag = f" | CVSS {cvss_score:.1f}" if cvss_score is not None else " | 0-Day Activo"
 
             raw_dump = (
-                f"[CISA-KEV-CATALOG] CVE={cve_id} | Vendor={vendor} | Product={product} | CWE={cwes}\n"
+                f"[CISA-KEV-CATALOG] CVE={cve_id}{cvss_tag} | Vendor={vendor} | Product={product} | CWE={cwes}\n"
                 f"[EXPLOITATION-STATE] Actively Exploited in the Wild | RansomwareCampaignUse={ransomware} | DateAdded={date_added}\n"
                 f"[TECHNICAL-SUMMARY] {short_desc}\n"
                 f"[MANDATORY-DIRECTIVE] {req_action} (Due: {due_date}) | Reference: {nvd_url}"
@@ -430,7 +489,7 @@ def fetch_cisa_kev_live_events(limit: int = 6) -> List[Dict[str, Any]]:
 
             events.append({
                 "source": "CISA_KEV_OFFICIAL_FEED",
-                "headline": f"[CISA KEV {cve_id}] {vuln_name} ({vendor} {product})",
+                "headline": f"[CISA KEV {cve_id}{cvss_tag}] {vuln_name} ({vendor} {product})",
                 "content": short_desc,
                 "base_friction": sf,
                 "base_inertia": si,
@@ -439,6 +498,8 @@ def fetch_cisa_kev_live_events(limit: int = 6) -> List[Dict[str, Any]]:
                 "evidence": {
                     "event_type": "ACTIVELY_EXPLOITED_ZERO_DAY_CVE",
                     "strategic_front": "CYBER_WARFARE",
+                    "cvss_score": cvss_score,
+                    "is_zero_day": True,
                     "protocol": f"CISA KEV Catalog / NIST NVD ({cwes})",
                     "asn_or_sector": f"{cve_id} // {vendor.upper()}",
                     "impact_radius_km": 650,
@@ -922,6 +983,16 @@ def _fetch_rss_feed_items(
 
             combined_text = f"{title}. {desc}"
             sf, si, sev = _score_text_entropy(combined_text)
+            cvss_score = _extract_cvss_score(combined_text)
+            cve_match = re.search(r"\b(CVE-\d{4}-\d{4,7})\b", combined_text, re.IGNORECASE)
+            if cvss_score is None and cve_match and strategic_front == "CYBER_WARFARE":
+                cvss_score = _fetch_cve_cvss_from_mitre(cve_match.group(1))
+                if cvss_score is not None and cvss_score >= 9.0:
+                    sf, si, sev = 0.92, 0.90, "CRITICAL"
+            is_zero_day = any(
+                k in combined_text.lower()
+                for k in ["zero-day", "0-day", "zero day", "actively exploited"]
+            )
             short_hash = _sha256_hex(link)[:6].upper()
             geo = resolve_geolocation_from_text(combined_text, unique_suffix=f"{source_tag[:4]}-{short_hash}")
 
@@ -944,6 +1015,8 @@ def _fetch_rss_feed_items(
                 "evidence": {
                     "event_type": event_type,
                     "strategic_front": strategic_front,
+                    "cvss_score": cvss_score,
+                    "is_zero_day": is_zero_day,
                     "protocol": protocol_label,
                     "asn_or_sector": f"{source_tag}-{short_hash}",
                     "impact_radius_km": 480 if sev == "CRITICAL" else 240,
